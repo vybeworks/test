@@ -1,0 +1,48 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=Oswald:wght@500;700&display=swap");
+
+:root {
+  --bg: #0d0f16;
+  --surface: #1a1d28;
+  --surface-2: #12141c;
+  --border: #262a38;
+  --text: #edeae3;
+  --muted: #8b8f9e;
+  --muted-2: #6b7280;
+  --ember: #e8a33d;
+  --ember-deep: #8a5a2e;
+  --ember-bright: #f4c15c;
+  --teal: #4fd1c5;
+  --rose: #e85a6e;
+
+  color-scheme: dark;
+  color: var(--text);
+  background: var(--bg);
+  font-family: "Inter", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+.grind-num {
+  font-family: "Oswald", sans-serif;
+  letter-spacing: 0.02em;
+}
+
+button,
+input {
+  font-family: inherit;
+}
