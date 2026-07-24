@@ -39,16 +39,16 @@ async function ensureFreshToken(admin: AdminClient, conn: Connection): Promise<s
   return json.access_token;
 }
 
-// YouTube's playlistItems/videos endpoints cap out at 50 items per request.
-// This syncs the most recent 50 uploads (across videos and Shorts alike -
-// they're both regular entries in the same uploads playlist) per run, not
-// the full channel history: a recurring 6-hour sync only needs to stay
-// current, and pulling a channel's entire back catalog on every run would
-// mean unbounded pagination and needless API quota use for no real benefit
-// to a "recent trend" tool. totalChannelVideos is returned so it's visible
-// when a channel has more than fits in one page, rather than silently
-// looking like a cutoff bug.
-const MAX_VIDEOS_PER_SYNC = 50;
+// YouTube's playlistItems/videos endpoints cap out at 50 items per request,
+// so pulling a whole history means paging through with pageToken. Re-syncing
+// every video on every run (not just new ones) is deliberate, not wasteful:
+// older videos' view/like/comment counts keep changing too, the upsert is
+// idempotent, and the API quota cost even for a few hundred videos (a couple
+// units per page) is trivial against the 10,000/day default. MAX_PAGES is a
+// safety bound against a pathological runaway (or a future mega-channel),
+// not an expected limit - it's returned as `truncated` if ever actually hit.
+const PAGE_SIZE = 50;
+const MAX_PAGES = 40; // up to 2,000 videos per sync
 
 interface SyncResult {
   channelTitle: string | null;
@@ -56,6 +56,39 @@ interface SyncResult {
   videosFound: number;
   synced: number;
   upsertErrors: string[];
+  truncated: boolean;
+}
+
+async function fetchAllUploadVideoIds(
+  uploadsPlaylistId: string,
+  headers: Record<string, string>
+): Promise<{ videoIds: string[]; truncated: boolean }> {
+  const videoIds: string[] = [];
+  let pageToken: string | undefined;
+  let pages = 0;
+
+  do {
+    const url = new URL("https://www.googleapis.com/youtube/v3/playlistItems");
+    url.searchParams.set("part", "contentDetails");
+    url.searchParams.set("maxResults", String(PAGE_SIZE));
+    url.searchParams.set("playlistId", uploadsPlaylistId);
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+    const resp = await fetch(url.toString(), { headers });
+    if (!resp.ok) throw new Error(`playlistItems.list failed: ${await resp.text()}`);
+    const json = await resp.json();
+    videoIds.push(...(json.items ?? []).map((item: any) => item.contentDetails.videoId));
+    pageToken = json.nextPageToken;
+    pages++;
+  } while (pageToken && pages < MAX_PAGES);
+
+  return { videoIds, truncated: Boolean(pageToken) };
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToken: string): Promise<SyncResult> {
@@ -74,51 +107,49 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
   const uploadsPlaylistId = channel?.contentDetails?.relatedPlaylists?.uploads;
   if (!uploadsPlaylistId) throw new Error(`no uploads playlist found (channel: ${channelTitle ?? "none returned"})`);
 
-  const playlistResp = await fetch(
-    `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=${MAX_VIDEOS_PER_SYNC}&playlistId=${uploadsPlaylistId}`,
-    { headers }
-  );
-  if (!playlistResp.ok) throw new Error(`playlistItems.list failed: ${await playlistResp.text()}`);
-  const playlistJson = await playlistResp.json();
-  const videoIds: string[] = (playlistJson.items ?? []).map((item: any) => item.contentDetails.videoId);
+  const { videoIds, truncated } = await fetchAllUploadVideoIds(uploadsPlaylistId, headers);
   if (videoIds.length === 0) {
-    return { channelTitle, totalChannelVideos, videosFound: 0, synced: 0, upsertErrors: [] };
+    return { channelTitle, totalChannelVideos, videosFound: 0, synced: 0, upsertErrors: [], truncated };
   }
-
-  const statsResp = await fetch(
-    `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${videoIds.join(",")}`,
-    { headers }
-  );
-  if (!statsResp.ok) throw new Error(`videos.list failed: ${await statsResp.text()}`);
-  const statsJson = await statsResp.json();
 
   let synced = 0;
   const upsertErrors: string[] = [];
-  for (const video of statsJson.items ?? []) {
-    const stats = video.statistics ?? {};
-    const { error } = await admin.from("performance_entries").upsert(
-      {
-        user_id: userId,
-        platform: "youtube",
-        external_post_id: video.id,
-        post_date: (video.snippet?.publishedAt ?? new Date().toISOString()).slice(0, 10),
-        content_type: null,
-        views: Number(stats.viewCount ?? 0),
-        likes: Number(stats.likeCount ?? 0),
-        comments: Number(stats.commentCount ?? 0),
-        follows_gained: 0,
-        note: video.snippet?.title ?? null,
-        source: "youtube_api",
-      },
-      { onConflict: "user_id,platform,external_post_id" }
+
+  for (const idBatch of chunk(videoIds, PAGE_SIZE)) {
+    const statsResp = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${idBatch.join(",")}`,
+      { headers }
     );
-    if (!error) synced++;
-    else {
-      console.error(`sync-performance: upsert failed for video ${video.id}:`, error.message);
-      upsertErrors.push(`${video.id}: ${error.message}`);
+    if (!statsResp.ok) throw new Error(`videos.list failed: ${await statsResp.text()}`);
+    const statsJson = await statsResp.json();
+
+    for (const video of statsJson.items ?? []) {
+      const stats = video.statistics ?? {};
+      const { error } = await admin.from("performance_entries").upsert(
+        {
+          user_id: userId,
+          platform: "youtube",
+          external_post_id: video.id,
+          post_date: (video.snippet?.publishedAt ?? new Date().toISOString()).slice(0, 10),
+          content_type: null,
+          views: Number(stats.viewCount ?? 0),
+          likes: Number(stats.likeCount ?? 0),
+          comments: Number(stats.commentCount ?? 0),
+          follows_gained: 0,
+          note: video.snippet?.title ?? null,
+          source: "youtube_api",
+        },
+        { onConflict: "user_id,platform,external_post_id" }
+      );
+      if (!error) synced++;
+      else {
+        console.error(`sync-performance: upsert failed for video ${video.id}:`, error.message);
+        upsertErrors.push(`${video.id}: ${error.message}`);
+      }
     }
   }
-  return { channelTitle, totalChannelVideos, videosFound: videoIds.length, synced, upsertErrors };
+
+  return { channelTitle, totalChannelVideos, videosFound: videoIds.length, synced, upsertErrors, truncated };
 }
 
 Deno.serve(async (req) => {
