@@ -39,16 +39,26 @@ async function ensureFreshToken(admin: AdminClient, conn: Connection): Promise<s
   return json.access_token;
 }
 
-async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToken: string): Promise<number> {
+interface SyncResult {
+  channelTitle: string | null;
+  videosFound: number;
+  synced: number;
+  upsertErrors: string[];
+}
+
+async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToken: string): Promise<SyncResult> {
   const headers = { Authorization: `Bearer ${accessToken}` };
 
-  const channelResp = await fetch("https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true", {
-    headers,
-  });
+  const channelResp = await fetch(
+    "https://www.googleapis.com/youtube/v3/channels?part=snippet,contentDetails&mine=true",
+    { headers }
+  );
   if (!channelResp.ok) throw new Error(`channels.list failed: ${await channelResp.text()}`);
   const channelJson = await channelResp.json();
-  const uploadsPlaylistId = channelJson.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
-  if (!uploadsPlaylistId) throw new Error("no uploads playlist found for this channel");
+  const channel = channelJson.items?.[0];
+  const channelTitle: string | null = channel?.snippet?.title ?? null;
+  const uploadsPlaylistId = channel?.contentDetails?.relatedPlaylists?.uploads;
+  if (!uploadsPlaylistId) throw new Error(`no uploads playlist found (channel: ${channelTitle ?? "none returned"})`);
 
   const playlistResp = await fetch(
     `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=15&playlistId=${uploadsPlaylistId}`,
@@ -57,7 +67,7 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
   if (!playlistResp.ok) throw new Error(`playlistItems.list failed: ${await playlistResp.text()}`);
   const playlistJson = await playlistResp.json();
   const videoIds: string[] = (playlistJson.items ?? []).map((item: any) => item.contentDetails.videoId);
-  if (videoIds.length === 0) return 0;
+  if (videoIds.length === 0) return { channelTitle, videosFound: 0, synced: 0, upsertErrors: [] };
 
   const statsResp = await fetch(
     `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${videoIds.join(",")}`,
@@ -67,6 +77,7 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
   const statsJson = await statsResp.json();
 
   let synced = 0;
+  const upsertErrors: string[] = [];
   for (const video of statsJson.items ?? []) {
     const stats = video.statistics ?? {};
     const { error } = await admin.from("performance_entries").upsert(
@@ -86,9 +97,12 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
       { onConflict: "user_id,platform,external_post_id" }
     );
     if (!error) synced++;
-    else console.error(`sync-performance: upsert failed for video ${video.id}:`, error.message);
+    else {
+      console.error(`sync-performance: upsert failed for video ${video.id}:`, error.message);
+      upsertErrors.push(`${video.id}: ${error.message}`);
+    }
   }
-  return synced;
+  return { channelTitle, videosFound: videoIds.length, synced, upsertErrors };
 }
 
 Deno.serve(async (req) => {
@@ -114,12 +128,12 @@ Deno.serve(async (req) => {
   for (const conn of connections ?? []) {
     try {
       const accessToken = await ensureFreshToken(admin, conn as Connection);
-      const synced = await syncYoutubeChannel(admin, conn.user_id, accessToken);
+      const result = await syncYoutubeChannel(admin, conn.user_id, accessToken);
       await admin.from("platform_connection_status").upsert(
         { user_id: conn.user_id, platform: "youtube", last_synced_at: new Date().toISOString(), last_sync_error: null },
         { onConflict: "user_id,platform" }
       );
-      results.push({ user_id: conn.user_id, synced });
+      results.push({ user_id: conn.user_id, ...result });
     } catch (e) {
       console.error(`sync-performance: failed for user ${conn.user_id}:`, e);
       await admin.from("platform_connection_status").upsert(
