@@ -6,13 +6,24 @@ export function HomePage() {
   const { profile, signOut, refreshProfile } = useAuth();
   const [displayName, setDisplayName] = useState(profile?.display_name ?? "");
   const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const saveDisplayName = async (e: FormEvent) => {
     e.preventDefault();
     if (!profile) return;
     setSaving(true);
-    await supabase.from("profiles").update({ display_name: displayName }).eq("id", profile.id);
-    await refreshProfile();
+    setStatus(null);
+    const { error } = await supabase
+      .from("profiles")
+      .update({ display_name: displayName })
+      .eq("id", profile.id);
+    if (error) {
+      setStatus({ type: "error", message: error.message });
+    } else {
+      await refreshProfile();
+      setStatus({ type: "success", message: "Saved." });
+      setTimeout(() => setStatus(null), 2500);
+    }
     setSaving(false);
   };
 
@@ -68,6 +79,19 @@ export function HomePage() {
             Save
           </button>
         </form>
+
+        {status && (
+          <div
+            style={{
+              fontSize: 12,
+              color: status.type === "success" ? "var(--teal)" : "var(--rose)",
+              marginBottom: 16,
+              marginTop: -12,
+            }}
+          >
+            {status.type === "success" ? status.message : `Couldn't save: ${status.message}`}
+          </div>
+        )}
 
         <div style={{ fontSize: 12, color: "var(--muted-2)" }}>
           Accounts and the database are wired up. Streak tracking and the Weekly Rhythm come next.

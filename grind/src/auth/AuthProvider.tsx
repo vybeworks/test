@@ -39,22 +39,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    let cancelled = false;
+
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (cancelled) return;
       setSession(session);
-      if (session?.user) loadProfile(session.user.id);
-      setLoading(false);
+      if (session?.user) await loadProfile(session.user.id);
+      if (!cancelled) setLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
       if (session?.user) {
-        loadProfile(session.user.id);
+        setLoading(true);
+        await loadProfile(session.user.id);
+        setLoading(false);
       } else {
         setProfile(null);
+        setLoading(false);
       }
     });
 
-    return () => listener.subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      listener.subscription.unsubscribe();
+    };
   }, []);
 
   const signUpWithEmail = async (email: string, password: string, username: string) => {
