@@ -1,14 +1,26 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthProvider";
 import { usePerformanceEntries } from "../data/useReleaseData";
+import { connectYoutube, useConnectionStatus } from "../data/useConnections";
 import { PerformanceTrendChart } from "../components/PerformanceTrendChart";
 import { PLATFORM_META, type Platform } from "../lib/releaseToolkit";
 import { CONTENT_TYPES } from "../lib/rhythm";
 
+function timeAgo(iso: string | null): string {
+  if (!iso) return "not yet synced";
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 const PLATFORM_NOTE: Record<Platform, string> = {
   tiktok: "TikTok has no small-scale analytics API — manual entry here is permanent, not a placeholder.",
   instagram: "Manual for now — automatic Instagram sync lands in a later step.",
-  youtube: "Manual for now — automatic YouTube sync lands in a later step.",
+  youtube: "Connect above for automatic sync. Manual entry here is for backfilling or correcting synced data.",
 };
 
 function todayStr() {
@@ -18,6 +30,36 @@ function todayStr() {
 export function PerformanceTrackingPage() {
   const { user } = useAuth();
   const { entries, addEntry, removeEntry } = usePerformanceEntries(user?.id);
+  const { statuses } = useConnectionStatus(user?.id);
+
+  const [connectMessage, setConnectMessage] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+
+  useEffect(() => {
+    // useConnectionStatus already fetches fresh on mount, which by definition
+    // happens after the OAuth redirect lands back here - no manual refresh needed.
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connected");
+    const error = params.get("error");
+    if (connected) {
+      setConnectMessage(`${connected === "youtube" ? "YouTube" : connected} connected.`);
+    } else if (error) {
+      setConnectMessage(`Connection failed (${error}). Try again.`);
+    }
+    if (connected || error) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  const handleConnectYoutube = async () => {
+    setConnecting(true);
+    const message = await connectYoutube();
+    if (message) {
+      setConnectMessage(message);
+      setConnecting(false);
+    }
+    // on success this navigates away, so no need to clear `connecting`
+  };
 
   const [platform, setPlatform] = useState<Platform>("tiktok");
   const [postDate, setPostDate] = useState(todayStr());
@@ -60,7 +102,55 @@ export function PerformanceTrackingPage() {
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "40px 20px 60px" }}>
       <div style={{ textAlign: "center", fontSize: 13, color: "var(--muted)", marginBottom: 4 }}>Performance Tracking</div>
       <div style={{ textAlign: "center", fontSize: 11, color: "#4b4f5c", marginBottom: 20 }}>
-        manual entry for now — trend visualization over time
+        automatic sync where available, manual everywhere else
+      </div>
+
+      <div className="grind-card" style={{ padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: "var(--muted-2)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
+          Connections
+        </div>
+
+        {connectMessage && <div style={{ fontSize: 12, color: "var(--teal)", marginBottom: 10 }}>{connectMessage}</div>}
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{PLATFORM_META.youtube.label}</div>
+            {statuses.youtube ? (
+              <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
+                {statuses.youtube.external_account_label ?? "Connected"} · synced {timeAgo(statuses.youtube.last_synced_at)}
+                {statuses.youtube.last_sync_error ? " · last sync failed" : ""}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: "var(--muted-2)" }}>Not connected — pulls views/likes/comments automatically</div>
+            )}
+          </div>
+          {!statuses.youtube && (
+            <button
+              onClick={handleConnectYoutube}
+              disabled={connecting}
+              style={{
+                background: "var(--ember)",
+                color: "#12141c",
+                border: "none",
+                borderRadius: 8,
+                padding: "8px 14px",
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: connecting ? "default" : "pointer",
+                flexShrink: 0,
+              }}
+            >
+              {connecting ? "..." : "Connect"}
+            </button>
+          )}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", opacity: 0.5 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{PLATFORM_META.instagram.label}</div>
+            <div style={{ fontSize: 11, color: "var(--muted-2)" }}>Coming soon — manual entry below in the meantime</div>
+          </div>
+        </div>
       </div>
 
       <PerformanceTrendChart entries={entries} />
@@ -148,9 +238,23 @@ export function PerformanceTrackingPage() {
               <div key={e.id} className="grind-card" style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: PLATFORM_META[e.platform].color, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
                     {PLATFORM_META[e.platform].label}
                     {type ? ` · ${type.icon} ${type.label}` : ""}
+                    {e.source !== "manual" && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 700,
+                          color: "var(--teal)",
+                          border: "1px solid var(--teal)",
+                          borderRadius: 6,
+                          padding: "1px 5px",
+                        }}
+                      >
+                        AUTO
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
                     {e.post_date} · {e.views.toLocaleString()} views · {e.likes.toLocaleString()} likes ·{" "}

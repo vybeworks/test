@@ -3,19 +3,21 @@
 Independent-artist planning, tracking, and consistency app. PWA frontend (Vite + React +
 TypeScript) backed by Supabase (Postgres + Auth).
 
-Build status: **Step 3 — manual performance tracking + Release Toolkit.** Accounts (step 1) and
-the streak/rhythm habit loop (step 2), plus: manual performance entries per platform with a
-trend chart, and per-release 6-week rollout tracking with a 30-day content calendar. OAuth sync,
-the Insight Engine, Growth Recap/Release Archive, and the Collab Board are still ahead per the
-spec's build order.
+Build status: **Step 4 — Instagram/YouTube OAuth sync (YouTube built, Instagram next).** Accounts
+(step 1), the streak/rhythm habit loop (step 2), manual performance tracking + Release Toolkit
+(step 3), plus: automatic YouTube performance sync via OAuth and a scheduled background job.
+Instagram Graph API sync, the Insight Engine, Growth Recap/Release Archive, and the Collab Board
+are still ahead per the spec's build order.
 
 ## Setup
 
 1. **Create a Supabase project** at [supabase.com](https://supabase.com/dashboard).
-2. **Apply the schema.** In the Supabase dashboard's SQL editor, run the migrations in order:
-   `0001_profiles.sql`, `0002_rhythm_and_checkins.sql`, then `0003_performance_and_releases.sql`
-   (all in `supabase/migrations/`). (Or, if you have the Supabase CLI installed and linked to
-   your project: `supabase link --project-ref <your-ref>` then `supabase db push`.)
+2. **Apply the schema.** In the Supabase dashboard's SQL editor, run the migrations in order
+   (all in `supabase/migrations/`): `0001_profiles.sql`, `0002_rhythm_and_checkins.sql`,
+   `0003_performance_and_releases.sql`, then `0004_platform_connections.sql` (see its own setup
+   steps below - it needs a Vault secret created *before* it will fully succeed). (Or, if you have
+   the Supabase CLI linked to your project: `supabase link --project-ref <your-ref>` then
+   `supabase db push`.)
 3. **Enable Google sign-in (optional).** In the dashboard: Authentication → Providers → Google,
    and follow Supabase's instructions to add your OAuth client ID/secret. Email/password auth is
    enabled by default and needs no setup.
@@ -30,6 +32,62 @@ spec's build order.
    npm install
    npm run dev
    ```
+
+## Setting up YouTube OAuth sync (step 4)
+
+This needs the Supabase CLI logged in and linked to your project, since Edge Functions and their
+secrets can't be set from the SQL editor:
+
+```
+supabase login
+supabase link --project-ref uksdcyoxjvpmjsqqwdjj
+```
+
+**1. Set the Edge Function secrets.** `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected
+automatically - don't set those. Everything else:
+
+```
+supabase secrets set GOOGLE_CLIENT_ID=<your Google OAuth client ID>
+supabase secrets set GOOGLE_CLIENT_SECRET=<your Google OAuth client secret>
+supabase secrets set OAUTH_STATE_SECRET=$(openssl rand -hex 32)
+supabase secrets set CRON_SHARED_SECRET=$(openssl rand -hex 32)
+supabase secrets set FRONTEND_URL=http://localhost:5173
+```
+
+`OAUTH_STATE_SECRET` signs the OAuth `state` parameter so the callback can trust which user
+initiated the connection without a server-side session. `CRON_SHARED_SECRET` is a shared secret
+between the scheduled job and `sync-performance` - unrelated to Supabase's own auth, just a
+narrow-purpose credential so the sync endpoint isn't wide open. Use `openssl rand -hex 32` (or
+equivalent) rather than picking a value yourself. Update `FRONTEND_URL` to your real deployed URL
+once you have one - it's where the OAuth callback redirects the browser back to.
+
+**2. Store the same `CRON_SHARED_SECRET` value in Supabase Vault**, by hand, in the SQL editor -
+never in a committed migration:
+
+```sql
+select vault.create_secret('<the exact same value you set above>', 'cron_shared_secret');
+```
+
+**3. Deploy the three functions.** The callback and the cron-triggered sync are public endpoints
+by design (their security comes from the state signature and shared secret respectively, not from
+Supabase's own JWT gate), so they need `--no-verify-jwt`:
+
+```
+supabase functions deploy youtube-oauth-start
+supabase functions deploy youtube-oauth-callback --no-verify-jwt
+supabase functions deploy sync-performance --no-verify-jwt
+```
+
+**4. Run `0004_platform_connections.sql`** (in the SQL editor) if you haven't already - it sets
+up the scheduled job that calls `sync-performance` every 6 hours via `pg_cron`/`pg_net`. If the
+`create extension` lines fail with a permissions error, enable both under Database → Extensions
+in the dashboard first, then re-run just the `cron.schedule(...)` statement at the bottom by hand.
+
+**5. Test it**: open the app, go to the Track tab, click Connect next to YouTube, and go through
+Google's consent screen. You should land back on the Track tab with "YouTube connected." and see
+your channel name once the first sync runs (immediately, or trigger one early by calling
+`sync-performance` manually with the shared secret: `curl -X POST -H "Authorization: Bearer
+<CRON_SHARED_SECRET>" https://uksdcyoxjvpmjsqqwdjj.supabase.co/functions/v1/sync-performance`).
 
 ## Deploying
 
@@ -97,3 +155,41 @@ any client code.
 - **`performance_entries.source`** defaults to `'manual'` and already has `'instagram_api'` /
   `'youtube_api'` as valid values, so step 4's OAuth sync can write into this same table without
   a schema change - manual override stays available on every row regardless of source, per spec.
+
+## How OAuth sync is wired
+
+Token exchange needs a client secret that must never reach the browser, so this step introduces
+Supabase Edge Functions (`supabase/functions/`) - the first server-side code in this project.
+
+- **`platform_connections`** (server-only) holds access/refresh tokens. RLS is enabled with
+  *zero* policies for `anon`/`authenticated` - default-deny, no exceptions - so the only way to
+  read or write it is the `service_role` key, which only ever runs inside Edge Functions and is
+  never shipped to the client. **`platform_connection_status`** is a separate, deliberately
+  token-free table (connected label, last synced, last error) with a normal owner-only select
+  policy, so the UI can show connection state without the tables ever touching each other's
+  access patterns.
+- **`youtube-oauth-start`** — called via `supabase.functions.invoke` (so it gets the caller's
+  Supabase JWT automatically), verifies that JWT, signs a `state` value carrying the user id
+  (HMAC'd with `OAUTH_STATE_SECRET`, 10-minute expiry - see `_shared/state.ts`), and returns
+  Google's authorization URL for the frontend to navigate to.
+- **`youtube-oauth-callback`** — a public endpoint (Google redirects the bare browser here, no
+  Supabase session available). Verifies the signed `state` to recover the user id, exchanges the
+  code for tokens server-side, looks up the channel, writes both tables via the service-role
+  client, and redirects back into the app with `?connected=youtube` or `?error=...`.
+- **`sync-performance`** — checked via `CRON_SHARED_SECRET` (a narrow-purpose credential, not
+  Supabase's own auth) instead of a user JWT, since it runs for every connected user on a
+  schedule with nobody logged in. Refreshes any expired access token, pulls each channel's recent
+  uploads and statistics, and upserts into `performance_entries` keyed by the new
+  `external_post_id` column (`source: 'youtube_api'`) - so re-running the sync updates the same
+  row's view/like/comment counts instead of duplicating it.
+- **Scheduling**: `0004_platform_connections.sql` enables `pg_cron`/`pg_net` and schedules a call
+  to `sync-performance` every 6 hours. The shared secret it sends lives in Supabase Vault, set by
+  hand (never in a committed migration) - see the setup steps above.
+- **Why the 6-week YouTube quirk matters**: `youtube.readonly` is a *sensitive* but not
+  *restricted* Google scope, so publishing the OAuth consent screen to production is close to
+  instant and avoids the 7-day refresh-token expiry that unverified/testing apps get stuck with -
+  worth doing before relying on the schedule long-term.
+- **Instagram is schema-ready but not built yet.** `platform`/`source` check constraints already
+  include `'instagram'`/`'instagram_api'`, and the Track tab shows it as "coming soon" rather than
+  hiding it, but the actual Graph API integration (Business/Creator account + Facebook Page + Meta
+  App Review for anyone beyond your own test account) is next.
