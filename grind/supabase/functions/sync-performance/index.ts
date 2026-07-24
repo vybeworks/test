@@ -39,8 +39,20 @@ async function ensureFreshToken(admin: AdminClient, conn: Connection): Promise<s
   return json.access_token;
 }
 
+// YouTube's playlistItems/videos endpoints cap out at 50 items per request.
+// This syncs the most recent 50 uploads (across videos and Shorts alike -
+// they're both regular entries in the same uploads playlist) per run, not
+// the full channel history: a recurring 6-hour sync only needs to stay
+// current, and pulling a channel's entire back catalog on every run would
+// mean unbounded pagination and needless API quota use for no real benefit
+// to a "recent trend" tool. totalChannelVideos is returned so it's visible
+// when a channel has more than fits in one page, rather than silently
+// looking like a cutoff bug.
+const MAX_VIDEOS_PER_SYNC = 50;
+
 interface SyncResult {
   channelTitle: string | null;
+  totalChannelVideos: number | null;
   videosFound: number;
   synced: number;
   upsertErrors: string[];
@@ -50,24 +62,28 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
   const headers = { Authorization: `Bearer ${accessToken}` };
 
   const channelResp = await fetch(
-    "https://www.googleapis.com/youtube/v3/channels?part=snippet,contentDetails&mine=true",
+    "https://www.googleapis.com/youtube/v3/channels?part=snippet,contentDetails,statistics&mine=true",
     { headers }
   );
   if (!channelResp.ok) throw new Error(`channels.list failed: ${await channelResp.text()}`);
   const channelJson = await channelResp.json();
   const channel = channelJson.items?.[0];
   const channelTitle: string | null = channel?.snippet?.title ?? null;
+  const totalChannelVideos: number | null =
+    channel?.statistics?.videoCount !== undefined ? Number(channel.statistics.videoCount) : null;
   const uploadsPlaylistId = channel?.contentDetails?.relatedPlaylists?.uploads;
   if (!uploadsPlaylistId) throw new Error(`no uploads playlist found (channel: ${channelTitle ?? "none returned"})`);
 
   const playlistResp = await fetch(
-    `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=15&playlistId=${uploadsPlaylistId}`,
+    `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=${MAX_VIDEOS_PER_SYNC}&playlistId=${uploadsPlaylistId}`,
     { headers }
   );
   if (!playlistResp.ok) throw new Error(`playlistItems.list failed: ${await playlistResp.text()}`);
   const playlistJson = await playlistResp.json();
   const videoIds: string[] = (playlistJson.items ?? []).map((item: any) => item.contentDetails.videoId);
-  if (videoIds.length === 0) return { channelTitle, videosFound: 0, synced: 0, upsertErrors: [] };
+  if (videoIds.length === 0) {
+    return { channelTitle, totalChannelVideos, videosFound: 0, synced: 0, upsertErrors: [] };
+  }
 
   const statsResp = await fetch(
     `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${videoIds.join(",")}`,
@@ -102,7 +118,7 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
       upsertErrors.push(`${video.id}: ${error.message}`);
     }
   }
-  return { channelTitle, videosFound: videoIds.length, synced, upsertErrors };
+  return { channelTitle, totalChannelVideos, videosFound: videoIds.length, synced, upsertErrors };
 }
 
 Deno.serve(async (req) => {
