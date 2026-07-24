@@ -3,8 +3,17 @@ import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { AuthScreen } from "./auth/AuthScreen";
 import { HomePage } from "./pages/HomePage";
 import { RhythmPage } from "./pages/RhythmPage";
+import { PerformanceTrackingPage } from "./pages/PerformanceTrackingPage";
+import { ReleaseToolkitPage } from "./pages/ReleaseToolkitPage";
 
-type Screen = "home" | "rhythm";
+type Screen = "home" | "rhythm" | "track" | "releases";
+
+const TABS: { key: Screen; label: string }[] = [
+  { key: "home", label: "Home" },
+  { key: "rhythm", label: "Rhythm" },
+  { key: "track", label: "Track" },
+  { key: "releases", label: "Releases" },
+];
 
 function AppShell() {
   const { signOut } = useAuth();
@@ -12,7 +21,10 @@ function AppShell() {
 
   return (
     <div style={{ paddingBottom: 64 }}>
-      {screen === "home" ? <HomePage /> : <RhythmPage />}
+      {screen === "home" && <HomePage />}
+      {screen === "rhythm" && <RhythmPage />}
+      {screen === "track" && <PerformanceTrackingPage />}
+      {screen === "releases" && <ReleaseToolkitPage />}
 
       <div
         style={{
@@ -28,14 +40,18 @@ function AppShell() {
         }}
       >
         <div style={{ width: "100%", maxWidth: 480, display: "flex" }}>
-          <button onClick={() => setScreen("home")} style={tabStyle(screen === "home")}>
-            Home
-          </button>
-          <button onClick={() => setScreen("rhythm")} style={tabStyle(screen === "rhythm")}>
-            Rhythm
-          </button>
-          <button onClick={signOut} style={{ ...tabStyle(false), flex: "0 0 auto", padding: "14px 16px", color: "var(--muted-2)" }}>
-            Log out
+          {TABS.map((tab) => (
+            <button key={tab.key} onClick={() => setScreen(tab.key)} style={tabStyle(screen === tab.key)}>
+              {tab.label}
+            </button>
+          ))}
+          <button
+            onClick={signOut}
+            title="Log out"
+            aria-label="Log out"
+            style={{ ...tabStyle(false), flex: "0 0 auto", padding: "14px 14px", color: "var(--muted-2)", fontSize: 16 }}
+          >
+            ⏻
           </button>
         </div>
       </div>
@@ -52,7 +68,7 @@ function tabStyle(active: boolean) {
     borderTop: active ? "2px solid var(--ember)" : "2px solid transparent",
     color: active ? "var(--ember)" : "var(--muted)",
     fontWeight: active ? (700 as const) : (500 as const),
-    fontSize: 13,
+    fontSize: 12,
     cursor: "pointer",
   };
 }

@@ -10,6 +10,8 @@ export interface Profile {
   goal: string | null;
   onboarding_completed_at: string | null;
   xp: number;
+  instagram_handle: string | null;
+  tiktok_handle: string | null;
   created_at: string;
   updated_at: string;
 }

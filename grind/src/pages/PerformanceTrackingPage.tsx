@@ -1,0 +1,183 @@
+import { useState, type FormEvent } from "react";
+import { useAuth } from "../auth/AuthProvider";
+import { usePerformanceEntries } from "../data/useReleaseData";
+import { PerformanceTrendChart } from "../components/PerformanceTrendChart";
+import { PLATFORM_META, type Platform } from "../lib/releaseToolkit";
+import { CONTENT_TYPES } from "../lib/rhythm";
+
+const PLATFORM_NOTE: Record<Platform, string> = {
+  tiktok: "TikTok has no small-scale analytics API — manual entry here is permanent, not a placeholder.",
+  instagram: "Manual for now — automatic Instagram sync lands in a later step.",
+  youtube: "Manual for now — automatic YouTube sync lands in a later step.",
+};
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function PerformanceTrackingPage() {
+  const { user } = useAuth();
+  const { entries, addEntry, removeEntry } = usePerformanceEntries(user?.id);
+
+  const [platform, setPlatform] = useState<Platform>("tiktok");
+  const [postDate, setPostDate] = useState(todayStr());
+  const [contentType, setContentType] = useState("");
+  const [views, setViews] = useState("");
+  const [likes, setLikes] = useState("");
+  const [comments, setComments] = useState("");
+  const [follows, setFollows] = useState("");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const message = await addEntry({
+      platform,
+      post_date: postDate,
+      content_type: contentType || null,
+      views: Number(views) || 0,
+      likes: Number(likes) || 0,
+      comments: Number(comments) || 0,
+      follows_gained: Number(follows) || 0,
+      note: note.trim() || null,
+    });
+    setBusy(false);
+    if (message) {
+      setError(message);
+      return;
+    }
+    setViews("");
+    setLikes("");
+    setComments("");
+    setFollows("");
+    setNote("");
+  };
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "40px 20px 60px" }}>
+      <div style={{ textAlign: "center", fontSize: 13, color: "var(--muted)", marginBottom: 4 }}>Performance Tracking</div>
+      <div style={{ textAlign: "center", fontSize: 11, color: "#4b4f5c", marginBottom: 20 }}>
+        manual entry for now — trend visualization over time
+      </div>
+
+      <PerformanceTrendChart entries={entries} />
+
+      <form onSubmit={submit} className="grind-card" style={{ padding: 16, marginTop: 16 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          {(Object.keys(PLATFORM_META) as Platform[]).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPlatform(p)}
+              style={{
+                flex: 1,
+                padding: "8px 0",
+                borderRadius: 8,
+                border: platform === p ? `1px solid ${PLATFORM_META[p].color}` : "1px solid var(--border)",
+                background: platform === p ? `${PLATFORM_META[p].color}22` : "var(--surface-2)",
+                color: "var(--text)",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {PLATFORM_META[p].label}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--muted-2)", marginBottom: 12 }}>{PLATFORM_NOTE[platform]}</div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <input type="date" value={postDate} onChange={(e) => setPostDate(e.target.value)} style={inputStyle} />
+          <select value={contentType} onChange={(e) => setContentType(e.target.value)} style={inputStyle}>
+            <option value="">content type (optional)</option>
+            {CONTENT_TYPES.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.icon} {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <input type="number" min={0} placeholder="views" value={views} onChange={(e) => setViews(e.target.value)} style={inputStyle} />
+          <input type="number" min={0} placeholder="likes" value={likes} onChange={(e) => setLikes(e.target.value)} style={inputStyle} />
+          <input type="number" min={0} placeholder="comments" value={comments} onChange={(e) => setComments(e.target.value)} style={inputStyle} />
+          <input type="number" min={0} placeholder="follows gained" value={follows} onChange={(e) => setFollows(e.target.value)} style={inputStyle} />
+        </div>
+
+        <input placeholder="note (optional)" value={note} onChange={(e) => setNote(e.target.value)} style={{ ...inputStyle, width: "100%", marginBottom: 10 }} />
+
+        {error && <div style={{ color: "var(--rose)", fontSize: 12, marginBottom: 10 }}>{error}</div>}
+
+        <button
+          type="submit"
+          disabled={busy}
+          style={{
+            width: "100%",
+            padding: "12px 0",
+            borderRadius: 10,
+            border: "none",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: busy ? "default" : "pointer",
+            background: "var(--ember)",
+            color: "#12141c",
+          }}
+        >
+          {busy ? "..." : "Log entry"}
+        </button>
+      </form>
+
+      <div style={{ marginTop: 24 }}>
+        <div style={{ fontSize: 12, color: "var(--muted-2)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
+          Logged posts
+        </div>
+        {entries.length === 0 && (
+          <div className="grind-card" style={{ padding: 20, textAlign: "center", color: "var(--muted-2)", fontSize: 13 }}>
+            Nothing logged yet.
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {entries.map((e) => {
+            const type = CONTENT_TYPES.find((t) => t.key === e.content_type);
+            return (
+              <div key={e.id} className="grind-card" style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: PLATFORM_META[e.platform].color, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {PLATFORM_META[e.platform].label}
+                    {type ? ` · ${type.icon} ${type.label}` : ""}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
+                    {e.post_date} · {e.views.toLocaleString()} views · {e.likes.toLocaleString()} likes ·{" "}
+                    {e.comments.toLocaleString()} comments · +{e.follows_gained.toLocaleString()} follows
+                  </div>
+                  {e.note && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{e.note}</div>}
+                </div>
+                <button
+                  onClick={() => removeEntry(e.id)}
+                  style={{ background: "none", border: "none", color: "#4b4f5c", cursor: "pointer", flexShrink: 0 }}
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const inputStyle = {
+  background: "var(--surface-2)",
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  padding: "8px 10px",
+  color: "var(--text)",
+  fontSize: 13,
+} as const;

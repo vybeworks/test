@@ -157,12 +157,21 @@ export function computeStreak(checkedDates: Set<string>): number {
 }
 
 /**
- * GRIND Score, step-2 version: streak + rhythm consistency only, since the
- * spec's other two components (stats, release activity) don't exist until
- * later build steps. Revisit the weighting once those land.
+ * GRIND Score: the spec's four named components (streak, rhythm consistency,
+ * stats, release activity), 25 points each. Stats = breadth of platforms with
+ * at least one logged performance entry (0-3). Release activity = rollout
+ * steps actually completed, not just releases listed, so it can't be gamed
+ * by adding empty releases.
  */
-export function computeGrindScore(args: { streak: number; rhythmFilledCount: number }): number {
-  const streakScore = Math.min(50, args.streak * 5);
-  const rhythmScore = Math.round((Math.min(args.rhythmFilledCount, 14) / 14) * 50);
-  return Math.round(streakScore + rhythmScore);
+export function computeGrindScore(args: {
+  streak: number;
+  rhythmFilledCount: number;
+  distinctPlatformsLogged: number;
+  rolloutStepsCompleted: number;
+}): number {
+  const streakScore = Math.min(25, args.streak * 2.5);
+  const rhythmScore = Math.round((Math.min(args.rhythmFilledCount, 14) / 14) * 25);
+  const statsScore = Math.round((Math.min(args.distinctPlatformsLogged, 3) / 3) * 25);
+  const releaseScore = Math.min(25, args.rolloutStepsCompleted * 3);
+  return Math.round(streakScore + rhythmScore + statsScore + releaseScore);
 }

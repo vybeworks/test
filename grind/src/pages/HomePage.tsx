@@ -2,6 +2,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthProvider";
 import { supabase } from "../lib/supabaseClient";
 import { addXp, useCheckins, useRhythmCompletions, useRhythmEntries } from "../data/useGrindData";
+import { usePlatformsLogged, useRolloutStepsCompletedTotal } from "../data/useReleaseData";
 import { useCountUp } from "../hooks/useCountUp";
 import { CheckInModal } from "../components/CheckInModal";
 import { MilestoneModal } from "../components/MilestoneModal";
@@ -49,7 +50,14 @@ export function HomePage() {
   const loggedYesterday = checkedDates.has(yesterdayKey);
 
   const rhythmFilledCount = Object.keys(rhythmEntries.content).length + Object.keys(rhythmEntries.music).length;
-  const grindScore = computeGrindScore({ streak, rhythmFilledCount });
+  const platformsLogged = usePlatformsLogged(userId);
+  const rolloutStepsCompleted = useRolloutStepsCompletedTotal(userId);
+  const grindScore = computeGrindScore({
+    streak,
+    rhythmFilledCount,
+    distinctPlatformsLogged: platformsLogged.size,
+    rolloutStepsCompleted,
+  });
   const grade = gradeFor(grindScore);
   const displayXp = useCountUp(profile?.xp ?? 0);
 
@@ -182,7 +190,7 @@ export function HomePage() {
         <div>
           <div style={{ fontSize: 10, color: "var(--muted-2)", letterSpacing: "0.08em", textTransform: "uppercase" }}>GRIND Score</div>
           <div style={{ fontSize: 15, fontWeight: 700, color: grade.color, marginTop: 2 }}>{grade.grade}</div>
-          <div style={{ fontSize: 11, color: "var(--muted-2)", marginTop: 2 }}>streak + rhythm consistency</div>
+          <div style={{ fontSize: 11, color: "var(--muted-2)", marginTop: 2 }}>streak + rhythm + stats + release activity</div>
         </div>
       </div>
 

@@ -3,19 +3,19 @@
 Independent-artist planning, tracking, and consistency app. PWA frontend (Vite + React +
 TypeScript) backed by Supabase (Postgres + Auth).
 
-Build status: **Step 2 — streak/accountability system + Weekly Rhythm.** Accounts (step 1) plus
-the core daily habit loop: onboarding, editable weekly rhythm, daily check-in, streak with one
-forgiving skip + backfill, XP, milestones, rank, and a GRIND Score. Performance tracking, the
-Release Toolkit, OAuth sync, the Insight Engine, and the Collab Board are still ahead per the
+Build status: **Step 3 — manual performance tracking + Release Toolkit.** Accounts (step 1) and
+the streak/rhythm habit loop (step 2), plus: manual performance entries per platform with a
+trend chart, and per-release 6-week rollout tracking with a 30-day content calendar. OAuth sync,
+the Insight Engine, Growth Recap/Release Archive, and the Collab Board are still ahead per the
 spec's build order.
 
 ## Setup
 
 1. **Create a Supabase project** at [supabase.com](https://supabase.com/dashboard).
 2. **Apply the schema.** In the Supabase dashboard's SQL editor, run the migrations in order:
-   `supabase/migrations/0001_profiles.sql`, then `supabase/migrations/0002_rhythm_and_checkins.sql`.
-   (Or, if you have the Supabase CLI installed and linked to your project:
-   `supabase link --project-ref <your-ref>` then `supabase db push`.)
+   `0001_profiles.sql`, `0002_rhythm_and_checkins.sql`, then `0003_performance_and_releases.sql`
+   (all in `supabase/migrations/`). (Or, if you have the Supabase CLI installed and linked to
+   your project: `supabase link --project-ref <your-ref>` then `supabase db push`.)
 3. **Enable Google sign-in (optional).** In the dashboard: Authentication → Providers → Google,
    and follow Supabase's instructions to add your OAuth client ID/secret. Email/password auth is
    enabled by default and needs no setup.
@@ -65,10 +65,35 @@ any client code.
   with optional suggestion chips.
 - `src/pages/HomePage.tsx` — the daily dashboard: GRIND Score, rank, streak flame, today's
   rhythm blocks (with "stuck?" prompts), the check-in flow, and the 28-day history grid.
-- **GRIND Score is currently streak + rhythm consistency only.** The spec's other two
-  components (stats, release activity) don't exist until later build steps — the weighting in
-  `computeGrindScore` will need revisiting once those land.
 - **No leaderboard or reflection journal.** Both existed in the prototype but aren't in the
   locked spec's Accountability section, so they were left out rather than carried forward by
   default. A leaderboard in particular would mean exposing other users' data before the Collab
   Board step has worked through how to do that safely.
+
+## How performance tracking + the Release Toolkit are wired
+
+- `src/lib/releaseToolkit.ts` — the static 6-week rollout template, platform metadata (labels +
+  categorical colors), and pure helpers: `daysUntil`, `generateContentCalendar` (uses the user's
+  *actual* content-rhythm days, not a fabricated fixed pattern), and `personalizeRollout` (fills
+  in the song title and, when set, Instagram/TikTok handles - never fabricated).
+- `src/data/useReleaseData.ts` — `useReleases` and `useRolloutCompletions` (per-release CRUD and
+  step-toggling) and `usePerformanceEntries` (manual entry CRUD), plus two lightweight aggregate
+  hooks (`usePlatformsLogged`, `useRolloutStepsCompletedTotal`) that feed the GRIND Score.
+- `src/pages/PerformanceTrackingPage.tsx` — manual entry form (TikTok is permanently manual, no
+  small-scale analytics API exists for it; Instagram/YouTube are manual until the OAuth step)
+  plus a trend chart and the raw entry list (which doubles as the chart's accessible table view).
+- `src/pages/ReleaseToolkitPage.tsx` — release CRUD, the personalized rollout checklist, the
+  30-day calendar, and a small "platform handles" form purely so the rollout copy has something
+  real to reference.
+- **Performance trend chart colors** (`PLATFORM_META` in `releaseToolkit.ts`) were run through the
+  dataviz skill's palette validator against this app's actual card surface (`#12141c`) —
+  CVD separation, normal-vision floor, and contrast all pass, all-pairs. They're deliberately
+  distinct from the app's existing ember/teal/rose, which already carry other meanings (streak
+  heat, completion, release urgency) — reusing those for platform identity would blur both.
+- **GRIND Score now uses all four of the spec's named components** (streak, rhythm, stats,
+  release activity), 25 points each. "Stats" is platform breadth (how many of the 3 platforms
+  have at least one logged entry), and "release activity" is rollout steps actually completed
+  (not just releases listed, so it can't be gamed by adding empty releases).
+- **`performance_entries.source`** defaults to `'manual'` and already has `'instagram_api'` /
+  `'youtube_api'` as valid values, so step 4's OAuth sync can write into this same table without
+  a schema change - manual override stays available on every row regardless of source, per spec.
