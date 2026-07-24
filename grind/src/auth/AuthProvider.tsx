@@ -6,6 +6,10 @@ export interface Profile {
   id: string;
   username: string;
   display_name: string | null;
+  genre: string | null;
+  goal: string | null;
+  onboarding_completed_at: string | null;
+  xp: number;
   created_at: string;
   updated_at: string;
 }

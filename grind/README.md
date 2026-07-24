@@ -3,17 +3,19 @@
 Independent-artist planning, tracking, and consistency app. PWA frontend (Vite + React +
 TypeScript) backed by Supabase (Postgres + Auth).
 
-Build status: **Step 1 — accounts + database.** Sign up, log in (email/password or Google),
-and a per-user `profiles` row created automatically on signup. Nothing past this is wired up
-yet on purpose — later steps (Weekly Rhythm, streaks, performance tracking, etc.) land in that
-order per the product spec.
+Build status: **Step 2 — streak/accountability system + Weekly Rhythm.** Accounts (step 1) plus
+the core daily habit loop: onboarding, editable weekly rhythm, daily check-in, streak with one
+forgiving skip + backfill, XP, milestones, rank, and a GRIND Score. Performance tracking, the
+Release Toolkit, OAuth sync, the Insight Engine, and the Collab Board are still ahead per the
+spec's build order.
 
 ## Setup
 
 1. **Create a Supabase project** at [supabase.com](https://supabase.com/dashboard).
-2. **Apply the schema.** In the Supabase dashboard's SQL editor, run the contents of
-   `supabase/migrations/0001_profiles.sql`. (Or, if you have the Supabase CLI installed and
-   linked to your project: `supabase link --project-ref <your-ref>` then `supabase db push`.)
+2. **Apply the schema.** In the Supabase dashboard's SQL editor, run the migrations in order:
+   `supabase/migrations/0001_profiles.sql`, then `supabase/migrations/0002_rhythm_and_checkins.sql`.
+   (Or, if you have the Supabase CLI installed and linked to your project:
+   `supabase link --project-ref <your-ref>` then `supabase db push`.)
 3. **Enable Google sign-in (optional).** In the dashboard: Authentication → Providers → Google,
    and follow Supabase's instructions to add your OAuth client ID/secret. Email/password auth is
    enabled by default and needs no setup.
@@ -47,3 +49,26 @@ any client code.
   automatically whenever someone signs up — the client never inserts into `profiles` directly.
 - Row-level security on `profiles` restricts every row to its own owner (`auth.uid() = id`) for
   both reads and writes.
+
+## How the streak/rhythm system is wired
+
+- `src/lib/rhythm.ts` — constants (suggestion banks, moods, ranks, milestones, ember/grade
+  tiers) and pure functions (deterministic day-spread, streak-with-one-skip calculation, GRIND
+  Score). No Supabase calls in this file on purpose — it's all unit-testable logic.
+- `src/data/useGrindData.ts` — hooks wrapping the three new tables: `useRhythmEntries` (the
+  repeating weekly template), `useCheckins` (the daily accountability log), and
+  `useRhythmCompletions` (today's checkable rhythm blocks) — plus `addXp`, which calls the
+  `increment_xp` Postgres function so XP updates are atomic instead of a racy read-modify-write.
+- `src/onboarding/OnboardingFlow.tsx` — first-use questionnaire that deterministically builds a
+  starting rhythm (never random) and is skippable.
+- `src/pages/RhythmPage.tsx` — edit the Content Calendar and Music Focus tracks per weekday,
+  with optional suggestion chips.
+- `src/pages/HomePage.tsx` — the daily dashboard: GRIND Score, rank, streak flame, today's
+  rhythm blocks (with "stuck?" prompts), the check-in flow, and the 28-day history grid.
+- **GRIND Score is currently streak + rhythm consistency only.** The spec's other two
+  components (stats, release activity) don't exist until later build steps — the weighting in
+  `computeGrindScore` will need revisiting once those land.
+- **No leaderboard or reflection journal.** Both existed in the prototype but aren't in the
+  locked spec's Accountability section, so they were left out rather than carried forward by
+  default. A leaderboard in particular would mean exposing other users' data before the Collab
+  Board step has worked through how to do that safely.
