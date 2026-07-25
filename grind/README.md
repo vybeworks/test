@@ -89,6 +89,64 @@ your channel name once the first sync runs (immediately, or trigger one early by
 `sync-performance` manually with the shared secret: `curl -X POST -H "Authorization: Bearer
 <CRON_SHARED_SECRET>" https://uksdcyoxjvpmjsqqwdjj.supabase.co/functions/v1/sync-performance`).
 
+## Setting up the launch email
+
+A separate, manually-triggered piece: sends the "GRIND is live" email once, on demand, to
+everyone in `waitlist_signups` (a table from the pre-launch landing page, outside this app but in
+the same Supabase project). Requires a [Resend](https://resend.com) account with
+`joingrindapp.com` verified as a sending domain (already done) and its own API key with
+**Sending access** only.
+
+**1. Set the secrets:**
+
+```
+supabase secrets set RESEND_API_KEY=<your Resend API key>
+supabase secrets set LAUNCH_EMAIL_SECRET=$(openssl rand -hex 32)
+supabase secrets set MAIL_FROM_ADDRESS=grind@joingrindapp.com
+supabase secrets set GET_STARTED_URL=https://joingrindapp.com
+```
+
+`LAUNCH_EMAIL_SECRET` is its own credential, separate from `CRON_SHARED_SECRET` - a leak of one
+shouldn't also be able to trigger the other. `GET_STARTED_URL` is a placeholder for now; update it
+with the real production URL before the real trigger (no redeploy needed - it's just a secret):
+
+```
+supabase secrets set GET_STARTED_URL=<the real URL, once you have one>
+```
+
+**2. Run `0006_email_sends.sql`** in the SQL editor.
+
+**3. Deploy:**
+
+```
+supabase functions deploy send-launch-email --no-verify-jwt
+```
+
+**4. Sanity-check before the real send.** Two safety modes, both no-ops against the real list:
+
+```
+# See exactly who would receive it and how many, without sending anything:
+curl -X POST -H "Authorization: Bearer <LAUNCH_EMAIL_SECRET>" -H "Content-Type: application/json" \
+  -d '{"dryRun": true}' \
+  https://uksdcyoxjvpmjsqqwdjj.supabase.co/functions/v1/send-launch-email
+
+# Send exactly one real email, to yourself, to check the template renders
+# and lands correctly - never touches the waitlist or the sent-tracking table:
+curl -X POST -H "Authorization: Bearer <LAUNCH_EMAIL_SECRET>" -H "Content-Type: application/json" \
+  -d '{"testEmail": "you@example.com"}' \
+  https://uksdcyoxjvpmjsqqwdjj.supabase.co/functions/v1/send-launch-email
+```
+
+**5. The real send**, once you're ready (empty body, or omit `-d` entirely):
+
+```
+curl -X POST -H "Authorization: Bearer <LAUNCH_EMAIL_SECRET>" \
+  https://uksdcyoxjvpmjsqqwdjj.supabase.co/functions/v1/send-launch-email
+```
+
+Safe to re-run: it only ever sends to addresses not already recorded in `email_sends` for this
+campaign, so a partial failure or an accidental second trigger doesn't double-email anyone.
+
 ## Deploying
 
 Static hosting (Vercel recommended): point it at this directory, build command `npm run build`,
@@ -193,3 +251,29 @@ Supabase Edge Functions (`supabase/functions/`) - the first server-side code in 
   include `'instagram'`/`'instagram_api'`, and the Track tab shows it as "coming soon" rather than
   hiding it, but the actual Graph API integration (Business/Creator account + Facebook Page + Meta
   App Review for anyone beyond your own test account) is next.
+
+## How the launch email is wired
+
+Not part of the GRIND app's own feature spec - a separate operational tool for the pre-launch
+waitlist, built the same way as everything server-side so far (Edge Function + shared secret,
+manually triggered, no schedule).
+
+- **`email_sends`** tracks `(recipient_email, campaign)` pairs already sent, decoupled from
+  `waitlist_signups` on purpose: the sending address is meant to be reused for future
+  newsletters/promos, so a future campaign just needs its own campaign string, not a new column or
+  migration. Same server-only RLS pattern as `platform_connections` - zero client policies.
+- **`_shared/resend.ts`** wraps Resend's batch send endpoint (100 emails/request, each fully
+  separate - no recipient ever sees another's address) and is intentionally generic, not
+  launch-specific, so it's ready to reuse for whatever comes next on this address.
+- **`send-launch-email`** is launch-specific: the copy, the recipient source (`waitlist_signups`
+  minus whatever's already in `email_sends` for `campaign: 'launch'`), and two safety modes
+  (`dryRun` - list who'd receive it without sending; `testEmail` - one real send to a single
+  address, bypassing the waitlist and the tracking table entirely) for checking the template
+  before committing to the real list.
+- **Idempotent by construction, not by locking**: re-running the trigger (on purpose or by
+  accident) only ever sends to addresses not yet recorded as sent, so a partial failure is safe to
+  retry and a duplicate trigger doesn't double-email anyone. It does *not* guard against two
+  genuinely concurrent triggers racing each other before either has recorded anything - a
+  deliberate tradeoff for a manually-run, one-operator action, not worth a distributed lock.
+- **Unsubscribe is a reply-to-opt-out line in the footer**, not a self-service flow - proportionate
+  for a single one-time launch email. Revisit if this becomes a recurring newsletter.
