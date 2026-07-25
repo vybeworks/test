@@ -147,6 +147,42 @@ curl -X POST -H "Authorization: Bearer <LAUNCH_EMAIL_SECRET>" \
 Safe to re-run: it only ever sends to addresses not already recorded in `email_sends` for this
 campaign, so a partial failure or an accidental second trigger doesn't double-email anyone.
 
+## Setting up the automatic welcome email
+
+Unlike the launch email, this one is automatic: fires once per row inserted into
+`waitlist_signups`, via a database trigger (not client-side, since the landing page that does the
+inserting isn't part of this repo). Reuses the same Resend setup and `MAIL_FROM_ADDRESS` from
+above - no new Resend configuration needed.
+
+**1. Set its own shared secret** (separate from `CRON_SHARED_SECRET` and `LAUNCH_EMAIL_SECRET` -
+each credential only able to trigger the one thing it's for):
+
+```
+supabase secrets set WELCOME_EMAIL_SECRET=$(openssl rand -hex 32)
+```
+
+**2. Store the same value in Vault**, by hand, in the SQL editor (same pattern as
+`cron_shared_secret` in the step 4 setup above):
+
+```sql
+select vault.create_secret('<the exact same value you set above>', 'welcome_email_secret');
+```
+
+**3. Deploy** (public endpoint by design - `pg_net` calls it, not a user session):
+
+```
+supabase functions deploy send-welcome-email --no-verify-jwt
+```
+
+**4. Run `0007_welcome_email_trigger.sql`** in the SQL editor - this creates the trigger itself,
+so do this *after* the Vault secret exists and the function is deployed, not before.
+
+**5. Test it**: insert a throwaway row directly in the SQL editor and confirm the email arrives:
+
+```sql
+insert into public.waitlist_signups (email) values ('you+test@joingrindapp.com');
+```
+
 ## Deploying
 
 Static hosting (Vercel recommended): point it at this directory, build command `npm run build`,
@@ -277,3 +313,26 @@ manually triggered, no schedule).
   deliberate tradeoff for a manually-run, one-operator action, not worth a distributed lock.
 - **Unsubscribe is a reply-to-opt-out line in the footer**, not a self-service flow - proportionate
   for a single one-time launch email. Revisit if this becomes a recurring newsletter.
+
+## How the automatic welcome email is wired
+
+- **A database trigger, not a client-side call** - the landing page that inserts into
+  `waitlist_signups` is a separate codebase this project has no access to, so a trigger is the
+  only mechanism available here that fires reliably regardless of what does the inserting.
+  `notify_waitlist_signup()` (in `0007_welcome_email_trigger.sql`) runs `after insert`, calling
+  `send-welcome-email` via `pg_net` - the same fire-and-forget async HTTP mechanism the cron job
+  already uses, so it can't slow down or fail someone's actual signup.
+- **`security definer`**, same pattern as `handle_new_user` in `0001_profiles.sql`: the trigger
+  needs to call `net.http_post` and read `vault.decrypted_secrets` regardless of which role
+  performs the insert - likely `anon`, from the landing page's public signup form, which may not
+  have its own grants on either.
+- **`WELCOME_EMAIL_SECRET` is its own credential**, separate from `CRON_SHARED_SECRET` and
+  `LAUNCH_EMAIL_SECRET` - same narrow-blast-radius reasoning as everywhere else: each secret can
+  only trigger the one thing it's for.
+- **`email_sends` with `campaign: 'welcome'`** guards against `send-welcome-email` ever firing
+  twice for the same address - belt-and-suspenders, since `waitlist_signups.email`'s own unique
+  constraint already means the trigger can't naturally fire twice for one address, and a standard
+  `after insert` trigger only fires once per row regardless.
+- **Reuses `_shared/resend.ts` and `MAIL_FROM_ADDRESS`** from the launch email - exactly the
+  "generic sending helper, launch-specific logic separate" split that address-reuse comment
+  predicted would pay off.
