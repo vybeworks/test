@@ -89,6 +89,49 @@ your channel name once the first sync runs (immediately, or trigger one early by
 `sync-performance` manually with the shared secret: `curl -X POST -H "Authorization: Bearer
 <CRON_SHARED_SECRET>" https://uksdcyoxjvpmjsqqwdjj.supabase.co/functions/v1/sync-performance`).
 
+## Setting up Instagram OAuth sync (step 4, Instagram half)
+
+Reuses `OAUTH_STATE_SECRET`, `CRON_SHARED_SECRET`, and `FRONTEND_URL` from the YouTube setup above
+- those are already platform-agnostic. Only two new secrets needed:
+
+**1. Set the secrets:**
+
+```
+supabase secrets set INSTAGRAM_APP_ID=<your Meta App ID>
+supabase secrets set INSTAGRAM_APP_SECRET=<your Meta App Secret>
+```
+
+**2. Before testing, confirm `instagram_business_manage_insights` is added** in the Meta app
+dashboard's Instagram product → use case permissions. The "Manage messaging & content on
+Instagram" use case only adds `instagram_business_basic` and `instagram_business_manage_messages`
+by default - insights (the permission this integration actually needs) has to be added
+separately, or the consent screen won't grant it even though the code requests it.
+
+**3. Deploy:**
+
+```
+supabase functions deploy instagram-oauth-start
+supabase functions deploy instagram-oauth-callback --no-verify-jwt
+supabase functions deploy sync-performance --no-verify-jwt
+```
+
+`sync-performance` now handles both platforms in one run (no second cron job needed - it was
+already scheduled every 6 hours by `0004_platform_connections.sql`), so redeploying it picks up
+Instagram automatically.
+
+**4. Test it**: Track tab → Connect next to Instagram → Instagram's consent screen (not
+Facebook's - this app uses direct Instagram Login, no Facebook Page involved). You should land
+back with "Instagram connected." Trigger a sync early the same way as YouTube's, with the same
+`CRON_SHARED_SECRET`.
+
+**Expect this to need a follow-up pass, honestly.** Instagram's Insights API metric names have
+changed more than once across API versions and differ by media type - `syncInstagramAccount`
+requests `reach` for views and is built to degrade gracefully (a failure on one post's insights
+call doesn't fail the sync, it just leaves that post's views at 0 with the specific error visible
+in the response's `upsertErrors`), but the metric name itself may need adjusting once we see a
+real response from your account, the same way YouTube needed two rounds of fixes after the first
+real test.
+
 ## Setting up the launch email
 
 A separate, manually-triggered piece: sends the "GRIND is live" email once, on demand, to
@@ -283,10 +326,27 @@ Supabase Edge Functions (`supabase/functions/`) - the first server-side code in 
   *restricted* Google scope, so publishing the OAuth consent screen to production is close to
   instant and avoids the 7-day refresh-token expiry that unverified/testing apps get stuck with -
   worth doing before relying on the schedule long-term.
-- **Instagram is schema-ready but not built yet.** `platform`/`source` check constraints already
-  include `'instagram'`/`'instagram_api'`, and the Track tab shows it as "coming soon" rather than
-  hiding it, but the actual Graph API integration (Business/Creator account + Facebook Page + Meta
-  App Review for anyone beyond your own test account) is next.
+- **Instagram uses direct Instagram Login, not Facebook Login.** Since itswillonez is a Creator
+  account, the lighter "Instagram API with Instagram Login" path applies - no linked Facebook Page
+  needed, unlike the older Facebook-Login-mediated flow. That meant no new migration for the
+  Instagram half at all: `platform`/`source` already accepted `'instagram'`/`'instagram_api'`
+  from the moment the schema was designed in step 4.
+- **Instagram's token model is genuinely different from YouTube's**, not just a different URL:
+  no separate `refresh_token` - the long-lived `access_token` itself is self-refreshed via
+  `ig_refresh_token`, and only works if the token is at least 24h old and not yet expired.
+  `ensureFreshInstagramToken` refreshes at a 7-day-before-expiry buffer (tokens last ~60 days) to
+  clear that minimum comfortably. `platform_connections.refresh_token` stays `null` for every
+  Instagram row - that's expected, not a bug.
+- **`sync-performance` dispatches by platform** rather than being YouTube-specific - one function,
+  one cron schedule, both platforms. `INSTAGRAM_MAX_MEDIA = 100` per run is a hard necessity, not
+  a style choice like YouTube's 2,000 cap: Instagram's rate limit is 200 calls/hour per account,
+  and fetching reach costs one call per post on top of the media-list pages, so a run has to stay
+  well under that ceiling.
+- **Views/reach fetching is deliberately best-effort per post** - Instagram's insights metric
+  names have shifted across API versions and differ by media type, so one post's insights call
+  failing doesn't fail the sync; it leaves that post's views at 0 with the specific error surfaced
+  in `upsertErrors`, the same diagnostic pattern that caught YouTube's `ON CONFLICT` and 15-video
+  issues early rather than failing silently.
 
 ## How the launch email is wired
 

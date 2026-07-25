@@ -35,12 +35,20 @@ export function useConnectionStatus(userId: string | undefined) {
   return { statuses, loading, refresh };
 }
 
-/** Starts the YouTube OAuth flow: gets Google's auth URL from the Edge Function, then navigates there. */
-export async function connectYoutube(): Promise<string | null> {
-  const { data, error } = await supabase.functions.invoke("youtube-oauth-start");
+/** Gets the platform's authorization URL from its start function, then navigates there. */
+async function startOAuth(functionName: string, platformLabel: string): Promise<string | null> {
+  const { data, error } = await supabase.functions.invoke(functionName);
   if (error || !data?.url) {
-    return error?.message ?? "Could not start YouTube connection";
+    return error?.message ?? `Could not start ${platformLabel} connection`;
   }
   window.location.href = data.url;
   return null;
+}
+
+export function connectYoutube(): Promise<string | null> {
+  return startOAuth("youtube-oauth-start", "YouTube");
+}
+
+export function connectInstagram(): Promise<string | null> {
+  return startOAuth("instagram-oauth-start", "Instagram");
 }

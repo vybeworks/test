@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthProvider";
 import { usePerformanceEntries } from "../data/useReleaseData";
-import { connectYoutube, useConnectionStatus } from "../data/useConnections";
+import { connectInstagram, connectYoutube, useConnectionStatus } from "../data/useConnections";
 import { PerformanceTrendChart } from "../components/PerformanceTrendChart";
 import { PLATFORM_META, type Platform } from "../lib/releaseToolkit";
 import { CONTENT_TYPES } from "../lib/rhythm";
@@ -17,9 +17,11 @@ function timeAgo(iso: string | null): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+const CONNECTABLE_LABEL: Record<string, string> = { youtube: "YouTube", instagram: "Instagram" };
+
 const PLATFORM_NOTE: Record<Platform, string> = {
   tiktok: "TikTok has no small-scale analytics API — manual entry here is permanent, not a placeholder.",
-  instagram: "Manual for now — automatic Instagram sync lands in a later step.",
+  instagram: "Connect above for automatic sync. Manual entry here is for backfilling or correcting synced data.",
   youtube: "Connect above for automatic sync. Manual entry here is for backfilling or correcting synced data.",
 };
 
@@ -42,7 +44,7 @@ export function PerformanceTrackingPage() {
     const connected = params.get("connected");
     const error = params.get("error");
     if (connected) {
-      setConnectMessage(`${connected === "youtube" ? "YouTube" : connected} connected.`);
+      setConnectMessage(`${CONNECTABLE_LABEL[connected] ?? connected} connected.`);
     } else if (error) {
       setConnectMessage(`Connection failed (${error}). Try again.`);
     }
@@ -51,9 +53,9 @@ export function PerformanceTrackingPage() {
     }
   }, []);
 
-  const handleConnectYoutube = async () => {
+  const handleConnect = async (connect: () => Promise<string | null>) => {
     setConnecting(true);
-    const message = await connectYoutube();
+    const message = await connect();
     if (message) {
       setConnectMessage(message);
       setConnecting(false);
@@ -112,45 +114,45 @@ export function PerformanceTrackingPage() {
 
         {connectMessage && <div style={{ fontSize: 12, color: "var(--teal)", marginBottom: 10 }}>{connectMessage}</div>}
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0" }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{PLATFORM_META.youtube.label}</div>
-            {statuses.youtube ? (
-              <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
-                {statuses.youtube.external_account_label ?? "Connected"} · synced {timeAgo(statuses.youtube.last_synced_at)}
-                {statuses.youtube.last_sync_error ? " · last sync failed" : ""}
-              </div>
-            ) : (
-              <div style={{ fontSize: 11, color: "var(--muted-2)" }}>Not connected — pulls views/likes/comments automatically</div>
+        {(
+          [
+            { key: "youtube" as const, connect: connectYoutube },
+            { key: "instagram" as const, connect: connectInstagram },
+          ]
+        ).map(({ key, connect }) => (
+          <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0" }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{PLATFORM_META[key].label}</div>
+              {statuses[key] ? (
+                <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
+                  {statuses[key]!.external_account_label ?? "Connected"} · synced {timeAgo(statuses[key]!.last_synced_at)}
+                  {statuses[key]!.last_sync_error ? " · last sync failed" : ""}
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: "var(--muted-2)" }}>Not connected — pulls views/likes/comments automatically</div>
+              )}
+            </div>
+            {!statuses[key] && (
+              <button
+                onClick={() => handleConnect(connect)}
+                disabled={connecting}
+                style={{
+                  background: "var(--ember)",
+                  color: "#12141c",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: connecting ? "default" : "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                {connecting ? "..." : "Connect"}
+              </button>
             )}
           </div>
-          {!statuses.youtube && (
-            <button
-              onClick={handleConnectYoutube}
-              disabled={connecting}
-              style={{
-                background: "var(--ember)",
-                color: "#12141c",
-                border: "none",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontWeight: 700,
-                fontSize: 12,
-                cursor: connecting ? "default" : "pointer",
-                flexShrink: 0,
-              }}
-            >
-              {connecting ? "..." : "Connect"}
-            </button>
-          )}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", opacity: 0.5 }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{PLATFORM_META.instagram.label}</div>
-            <div style={{ fontSize: 11, color: "var(--muted-2)" }}>Coming soon — manual entry below in the meantime</div>
-          </div>
-        </div>
+        ))}
       </div>
 
       <PerformanceTrendChart entries={entries} />
