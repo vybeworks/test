@@ -4,6 +4,9 @@ import { sendBatchEmails } from "../_shared/resend.ts";
 const CAMPAIGN = "welcome";
 const SUBJECT = "You're on the list.";
 
+const INSTAGRAM_URL = "https://www.instagram.com/joingrindapp/";
+const FACEBOOK_URL = "https://www.facebook.com/joingrindapp";
+
 function buildHtml(): string {
   return `<!doctype html>
 <html>
@@ -15,8 +18,15 @@ function buildHtml(): string {
             <tr>
               <td style="padding:40px 32px;">
                 <div style="font-weight:700;letter-spacing:0.15em;text-transform:uppercase;font-size:14px;color:#C77B2E;margin-bottom:24px;">GRIND</div>
-                <p style="font-size:16px;line-height:1.6;color:#2b2b2b;margin:0 0 20px;">You're in. When GRIND launches, you'll be one of the first to know — before anyone else.</p>
-                <p style="font-size:16px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">In the meantime: follow along, keep grinding, and we'll see you soon.</p>
+                <p style="font-size:16px;line-height:1.6;color:#2b2b2b;margin:0 0 20px;">You're in.</p>
+                <p style="font-size:16px;line-height:1.6;color:#2b2b2b;margin:0 0 20px;">When GRIND launches, you'll be one of the first to know — before anyone else.</p>
+                <p style="font-size:16px;line-height:1.6;color:#2b2b2b;margin:0 0 8px;">Follow along while it's being built:</p>
+                <p style="font-size:16px;line-height:1.8;margin:0 0 20px;">
+                  Instagram: <a href="${INSTAGRAM_URL}" style="color:#C77B2E;">${INSTAGRAM_URL}</a><br>
+                  Facebook: <a href="${FACEBOOK_URL}" style="color:#C77B2E;">${FACEBOOK_URL}</a>
+                </p>
+                <p style="font-size:16px;line-height:1.6;color:#2b2b2b;margin:0 0 20px;">Know another artist who's actually trying to make it? Send them the link — the more of us building together, the better this gets for everyone.</p>
+                <p style="font-size:16px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Keep grinding. We'll see you soon.</p>
                 <p style="font-size:16px;line-height:1.6;color:#2b2b2b;margin:20px 0 0;">— GRIND</p>
               </td>
             </tr>
@@ -29,7 +39,17 @@ function buildHtml(): string {
 }
 
 function buildText(): string {
-  return `You're in. When GRIND launches, you'll be one of the first to know — before anyone else. In the meantime: follow along, keep grinding, and we'll see you soon.
+  return `You're in.
+
+When GRIND launches, you'll be one of the first to know — before anyone else.
+
+Follow along while it's being built:
+Instagram: ${INSTAGRAM_URL}
+Facebook: ${FACEBOOK_URL}
+
+Know another artist who's actually trying to make it? Send them the link — the more of us building together, the better this gets for everyone.
+
+Keep grinding. We'll see you soon.
 
 — GRIND`;
 }
