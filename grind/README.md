@@ -204,12 +204,21 @@ supabase functions deploy sync-performance --no-verify-jwt
 ```
 
 Instagram's distinction is exact - `media_product_type` (already in the existing fields list) is
-Instagram's own tag, `REELS` vs. `FEED` vs. `STORY`. **YouTube's is a heuristic, flagged
-honestly**: the Data API has no official "is this a Short" field (there's a long-standing, still
-open request for one on Google's issue tracker) - so a video counts as a Short if its
-`contentDetails.duration` is ≤3 minutes, matching the cap YouTube raised Shorts to in October
-2024. This will misclassify a genuine long-form video that happens to run under 3 minutes as a
-Short - acceptable most of the time, worth knowing about if a specific video's badge looks wrong.
+Instagram's own tag, `REELS` vs. `FEED` vs. `STORY`. **YouTube's is a heuristic** - the Data API
+has no official "is this a Short" field (there's a long-standing, still open request for one on
+Google's issue tracker).
+
+**Correction after a real test**: the first version of this used duration alone (≤3 minutes =
+Short). Against a real channel, that classified 172 of 174 videos as "Shorts" - most of that
+channel's genuinely regular videos also happen to run under 3 minutes, so duration alone barely
+discriminates anything. Fixed to use aspect ratio as the primary signal instead (Shorts are
+vertical, 9:16; regular videos are horizontal, 16:9), pulled from `fileDetails.videoStreams` -
+owner-only data, available since this is the channel's own OAuth connection, no new scope needed.
+Duration is now only a tiebreaker: over 3 minutes is never a Short regardless of shape, and if
+`fileDetails` isn't available for a given video (not guaranteed for every upload), it falls back
+to the old duration-only guess for that one video only. Redeploy `sync-performance` again and
+re-trigger a sync (the upsert is idempotent, so this re-evaluates every existing row's badge, not
+just new ones) - no new migration needed for this specific fix, `content_format` already exists.
 
 ## Setting up the launch email
 
@@ -389,9 +398,11 @@ any client code.
   separate from `content_type` - the latter is the user's own manual content-rhythm
   categorization (reel/photo/song/etc, used for streak tracking), the former is a platform-native
   post-format badge (Reel/Post, Short/Video) detected from the sync itself. Instagram's is exact
-  (`media_product_type`); YouTube's is a documented heuristic (`contentDetails.duration` ≤ 3
-  minutes), since the Data API has no official Shorts flag - see "Reel/Short vs. regular
-  post/video badge" above for the honest caveat on that one.
+  (`media_product_type`); YouTube's is a heuristic, since the Data API has no official Shorts
+  flag - aspect ratio (`fileDetails.videoStreams`, vertical vs. horizontal) is the primary signal,
+  duration (`contentDetails.duration` ≤ 3 minutes) only a tiebreaker when aspect ratio isn't
+  available. See "Reel/Short vs. regular post/video badge" above for why duration alone wasn't
+  good enough on its own (it mislabeled the large majority of one real channel's regular videos).
 
 ## How OAuth sync is wired
 

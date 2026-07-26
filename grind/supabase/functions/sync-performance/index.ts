@@ -74,12 +74,16 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 // The Data API has no official "is this a Short" field (confirmed - Google's
-// own issue tracker has an open, unresolved request for one). Duration is the
-// best available heuristic: YouTube raised the Shorts length cap from 60s to
-// 3 minutes in October 2024, so anything at or under that is treated as a
-// Short. Not airtight (a long-form video happening to run under 3 minutes
-// would be misclassified), but it's the same heuristic most third-party
-// tools use in the absence of a real flag.
+// own issue tracker has an open, unresolved request for one). Duration ALONE
+// turned out to be a bad heuristic in practice, not just theoretically: a
+// real test against a real channel classified 172 of 174 videos as "short"
+// because most of that channel's *regular* videos also happen to run under
+// 3 minutes - duration overlaps between genuine Shorts and normal short
+// videos far more than expected. Aspect ratio is the actual distinguishing
+// signal (Shorts are vertical, 9:16; regular videos are horizontal, 16:9),
+// available via fileDetails.videoStreams - owner-only data, but that's what
+// we are here. Duration is now only the tiebreaker when aspect ratio can't
+// be determined (fileDetails isn't guaranteed available for every video).
 const SHORTS_MAX_SECONDS = 180;
 
 function parseIso8601DurationSeconds(duration: string | undefined): number | null {
@@ -88,6 +92,18 @@ function parseIso8601DurationSeconds(duration: string | undefined): number | nul
   if (!match) return null;
   const [, h, m, s] = match;
   return (Number(h ?? 0) * 3600) + (Number(m ?? 0) * 60) + Number(s ?? 0);
+}
+
+function classifyYoutubeFormat(video: any): "short" | "video" | null {
+  const durationSeconds = parseIso8601DurationSeconds(video.contentDetails?.duration);
+  if (durationSeconds === null) return null;
+  if (durationSeconds > SHORTS_MAX_SECONDS) return "video"; // too long to be a Short regardless of shape
+
+  const stream = video.fileDetails?.videoStreams?.[0];
+  if (stream?.heightPixels && stream?.widthPixels) {
+    return stream.heightPixels > stream.widthPixels ? "short" : "video";
+  }
+  return "short"; // no aspect-ratio data available - fall back to the duration-only heuristic
 }
 
 // --- YouTube ---
@@ -232,7 +248,7 @@ async function syncYoutubeChannel(
 
   for (const idBatch of chunk(videoIds, YT_PAGE_SIZE)) {
     const statsResp = await fetch(
-      `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet,contentDetails&id=${idBatch.join(",")}`,
+      `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet,contentDetails,fileDetails&id=${idBatch.join(",")}`,
       { headers }
     );
     if (!statsResp.ok) throw new Error(`videos.list failed: ${await statsResp.text()}`);
@@ -240,9 +256,7 @@ async function syncYoutubeChannel(
 
     for (const video of statsJson.items ?? []) {
       const stats = video.statistics ?? {};
-      const durationSeconds = parseIso8601DurationSeconds(video.contentDetails?.duration);
-      const contentFormat =
-        durationSeconds === null ? null : durationSeconds <= SHORTS_MAX_SECONDS ? "short" : "video";
+      const contentFormat = classifyYoutubeFormat(video);
       const { error } = await admin.from("performance_entries").upsert(
         {
           user_id: userId,
