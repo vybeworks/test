@@ -14,14 +14,23 @@ export interface ConnectionStatus {
 export function useConnectionStatus(userId: string | undefined) {
   const [statuses, setStatuses] = useState<Partial<Record<Platform, ConnectionStatus>>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!userId) return;
-    const { data, error } = await supabase
+    const { data, error: fetchError } = await supabase
       .from("platform_connection_status")
       .select("platform, external_account_label, follower_count, connected_at, last_synced_at, last_sync_error")
       .eq("user_id", userId);
-    if (!error && data) {
+    if (fetchError) {
+      // Surfaced instead of silently leaving `statuses` at its last-known
+      // value - a failed fetch here used to look identical to "nothing is
+      // connected," which is exactly wrong when connections actually exist
+      // and the query itself is broken (e.g. a column a migration hasn't
+      // been applied yet).
+      setError(fetchError.message);
+    } else if (data) {
+      setError(null);
       const map: Partial<Record<Platform, ConnectionStatus>> = {};
       for (const row of data as ConnectionStatus[]) map[row.platform] = row;
       setStatuses(map);
@@ -33,7 +42,7 @@ export function useConnectionStatus(userId: string | undefined) {
     refresh();
   }, [refresh]);
 
-  return { statuses, loading, refresh };
+  return { statuses, loading, error, refresh };
 }
 
 /** Gets the platform's authorization URL from its start function, then navigates there. */

@@ -32,7 +32,7 @@ function todayStr() {
 export function PerformanceTrackingPage() {
   const { user } = useAuth();
   const { entries, addEntry, removeEntry } = usePerformanceEntries(user?.id);
-  const { statuses } = useConnectionStatus(user?.id);
+  const { statuses, error: connectionStatusError } = useConnectionStatus(user?.id);
 
   const [connectMessage, setConnectMessage] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -120,6 +120,12 @@ export function PerformanceTrackingPage() {
         </div>
 
         {connectMessage && <div style={{ fontSize: 12, color: "var(--teal)", marginBottom: 10 }}>{connectMessage}</div>}
+        {connectionStatusError && (
+          <div style={{ fontSize: 12, color: "var(--rose)", marginBottom: 10 }}>
+            Couldn't load connection status: {connectionStatusError}. Your actual connections may still be fine — this is a
+            display error, not necessarily a disconnect.
+          </div>
+        )}
 
         {(
           [
