@@ -36,6 +36,12 @@ function formatFollowsDelta(n: number): string {
   return n < 0 ? `${n.toLocaleString()}` : `+${n.toLocaleString()}`;
 }
 
+// YouTube calls them subscribers, not followers - distinct platform
+// terminology, same underlying `follows_gained` column.
+function followUnitLabel(platform: Platform): string {
+  return platform === "youtube" ? "subs" : "follows";
+}
+
 export function PerformanceTrackingPage() {
   const { user } = useAuth();
   const { entries, addEntry, removeEntry, setTrialReelTag } = usePerformanceEntries(user?.id);
@@ -275,7 +281,14 @@ export function PerformanceTrackingPage() {
           <input type="number" min={0} placeholder="views" value={views} onChange={(e) => setViews(e.target.value)} style={inputStyle} />
           <input type="number" min={0} placeholder="likes" value={likes} onChange={(e) => setLikes(e.target.value)} style={inputStyle} />
           <input type="number" min={0} placeholder="comments" value={comments} onChange={(e) => setComments(e.target.value)} style={inputStyle} />
-          <input type="number" min={0} placeholder="follows gained" value={follows} onChange={(e) => setFollows(e.target.value)} style={inputStyle} />
+          <input
+            type="number"
+            min={0}
+            placeholder={`${followUnitLabel(logPlatform)} gained`}
+            value={follows}
+            onChange={(e) => setFollows(e.target.value)}
+            style={inputStyle}
+          />
         </div>
 
         {logPlatform === "instagram" && (
@@ -358,7 +371,7 @@ export function PerformanceTrackingPage() {
                   </div>
                   <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
                     {e.post_date} · {e.views.toLocaleString()} views · {e.likes.toLocaleString()} likes ·{" "}
-                    {e.comments.toLocaleString()} comments · {formatFollowsDelta(e.follows_gained)} follows
+                    {e.comments.toLocaleString()} comments · {formatFollowsDelta(e.follows_gained)} {followUnitLabel(e.platform)}
                   </div>
                   {e.note && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{e.note}</div>}
                   {e.platform === "instagram" && (
