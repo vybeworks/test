@@ -89,6 +89,47 @@ your channel name once the first sync runs (immediately, or trigger one early by
 `sync-performance` manually with the shared secret: `curl -X POST -H "Authorization: Bearer
 <CRON_SHARED_SECRET>" https://uksdcyoxjvpmjsqqwdjj.supabase.co/functions/v1/sync-performance`).
 
+## Adding per-video subscriber data (YouTube Analytics API)
+
+Per-video subscriber gain/loss - the number YouTube Studio shows per video - lives only in the
+separate YouTube Analytics API (`youtubeanalytics.googleapis.com`), not the Data API v3 used for
+everything else in the YouTube sync. It needs its own OAuth scope
+(`yt-analytics.readonly`), which any connection made before this feature won't have.
+
+**1. Run the migration**: `0010_youtube_analytics_scope.sql` (adds `platform_connections
+.granted_scopes` - server-only - and `platform_connection_status.has_analytics_scope` -
+client-readable).
+
+**2. Redeploy the three YouTube functions** - all three changed:
+
+```
+supabase functions deploy youtube-oauth-start
+supabase functions deploy youtube-oauth-callback --no-verify-jwt
+supabase functions deploy sync-performance --no-verify-jwt
+```
+
+**3. Reconnect existing YouTube connections.** This is unavoidable: Google only grants scopes a
+user has actually consented to, and existing connections predate this one. On the Track tab, any
+YouTube connection missing the scope now shows a small "Grant analytics access for per-video
+subscriber data" link under its status line - it's the exact same Connect flow as a fresh
+connection (same button, same Google consent screen), just triggered again. Google's consent
+screen will now list both the original read-only scope and the new analytics one; approving it
+issues a fresh token with both, and the existing connection is upserted in place (same
+`external_account_id`, no duplicate row). Nothing is lost by reconnecting - your synced history,
+follower count, and every logged entry stay exactly as they are.
+
+**4. Trigger a sync** the same way as the original setup, with the same `CRON_SHARED_SECRET`.
+Videos will start showing a real `follows_gained` value (net subscribers gained minus lost,
+attributed to that specific video) instead of the placeholder 0.
+
+**Expect this one to need a follow-up pass too, same as the original YouTube/Instagram builds**:
+the exact response shape and chunking limits of `dimensions=video` filtered queries on
+`youtubeanalytics.googleapis.com` are based on documentation, not a live test against a real
+channel yet. `fetchVideoSubscriberDeltas` in `sync-performance` is built to degrade gracefully - a
+failed chunk just leaves those videos at `follows_gained: 0` with the specific error visible in
+`upsertErrors`, it doesn't fail the whole sync - but the request shape itself (chunk size, date
+range, filter syntax) may need adjusting once we see a real response.
+
 ## Setting up Instagram OAuth sync (step 4, Instagram half)
 
 Reuses `OAUTH_STATE_SECRET`, `CRON_SHARED_SECRET`, and `FRONTEND_URL` from the YouTube setup above
@@ -344,6 +385,13 @@ Supabase Edge Functions (`supabase/functions/`) - the first server-side code in 
   *restricted* Google scope, so publishing the OAuth consent screen to production is close to
   instant and avoids the 7-day refresh-token expiry that unverified/testing apps get stuck with -
   worth doing before relying on the schedule long-term.
+- **Per-video subscriber data uses a second Google API and scope**, added after the fact:
+  `yt-analytics.readonly` alongside the original `youtube.readonly`, requested together in
+  `youtube-oauth-start`. `platform_connections.granted_scopes` (server-only) stores exactly what
+  Google granted for a given connection, so `sync-performance` knows whether to bother calling
+  `youtubeanalytics.googleapis.com` at all - it's a genuinely separate API from the Data API v3
+  used for everything else, gated on a scope most existing connections won't have without
+  reconnecting (see "Adding per-video subscriber data" above).
 - **Instagram uses direct Instagram Login, not Facebook Login.** Since itswillonez is a Creator
   account, the lighter "Instagram API with Instagram Login" path applies - no linked Facebook Page
   needed, unlike the older Facebook-Login-mediated flow. That meant no new migration for the

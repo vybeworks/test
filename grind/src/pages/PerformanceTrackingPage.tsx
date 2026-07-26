@@ -29,6 +29,13 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// YouTube's per-video subscriber gain/loss (via the Analytics API) can be
+// net-negative for a video that drove more unsubscribes than subscribes -
+// unlike every other platform here, which is always 0 or positive.
+function formatFollowsDelta(n: number): string {
+  return n < 0 ? `${n.toLocaleString()}` : `+${n.toLocaleString()}`;
+}
+
 export function PerformanceTrackingPage() {
   const { user } = useAuth();
   const { entries, addEntry, removeEntry, setTrialReelTag } = usePerformanceEntries(user?.id);
@@ -156,6 +163,24 @@ export function PerformanceTrackingPage() {
                 </div>
               ) : (
                 <div style={{ fontSize: 11, color: "var(--muted-2)" }}>Not connected — pulls views/likes/comments automatically</div>
+              )}
+              {key === "youtube" && statuses[key] && !statuses[key]!.has_analytics_scope && (
+                <button
+                  onClick={() => handleConnect(connect)}
+                  disabled={connecting}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--teal)",
+                    cursor: connecting ? "default" : "pointer",
+                    fontSize: 11,
+                    padding: 0,
+                    marginTop: 4,
+                    textDecoration: "underline",
+                  }}
+                >
+                  Grant analytics access for per-video subscriber data
+                </button>
               )}
             </div>
             {!statuses[key] && (
@@ -333,7 +358,7 @@ export function PerformanceTrackingPage() {
                   </div>
                   <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
                     {e.post_date} · {e.views.toLocaleString()} views · {e.likes.toLocaleString()} likes ·{" "}
-                    {e.comments.toLocaleString()} comments · +{e.follows_gained.toLocaleString()} follows
+                    {e.comments.toLocaleString()} comments · {formatFollowsDelta(e.follows_gained)} follows
                   </div>
                   {e.note && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{e.note}</div>}
                   {e.platform === "instagram" && (

@@ -62,6 +62,13 @@ Deno.serve(async (req) => {
         ? null
         : Number(channel.statistics.subscriberCount);
 
+    // Google returns the space-separated scopes actually granted for this
+    // token - not necessarily every scope requested, if the user is on a
+    // reconnect flow and Google short-circuits already-granted ones
+    // differently, or in case of any future partial-consent UI.
+    const grantedScopes: string | null = tokenJson.scope ?? null;
+    const hasAnalyticsScope = Boolean(grantedScopes?.includes("yt-analytics.readonly"));
+
     const admin = supabaseAdmin();
     const tokenExpiresAt = new Date(Date.now() + tokenJson.expires_in * 1000).toISOString();
 
@@ -89,6 +96,7 @@ Deno.serve(async (req) => {
         external_account_id: channel.id,
         external_account_label: channel.snippet?.title ?? null,
         connected_at: new Date().toISOString(),
+        granted_scopes: grantedScopes,
       },
       { onConflict: "user_id,platform" }
     );
@@ -102,6 +110,7 @@ Deno.serve(async (req) => {
         connected_at: new Date().toISOString(),
         last_synced_at: null,
         last_sync_error: null,
+        has_analytics_scope: hasAnalyticsScope,
       },
       { onConflict: "user_id,platform" }
     );

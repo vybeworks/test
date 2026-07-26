@@ -2,7 +2,11 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import { signState } from "../_shared/state.ts";
 
-const YOUTUBE_SCOPE = "https://www.googleapis.com/auth/youtube.readonly";
+// yt-analytics.readonly is what unlocks per-video subscriber gain/loss via
+// the separate YouTube Analytics API - requesting it here means every
+// connect (new or reconnect) grants both in one consent screen.
+const YOUTUBE_SCOPE =
+  "https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

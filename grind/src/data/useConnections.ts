@@ -9,6 +9,7 @@ export interface ConnectionStatus {
   connected_at: string | null;
   last_synced_at: string | null;
   last_sync_error: string | null;
+  has_analytics_scope: boolean;
 }
 
 export function useConnectionStatus(userId: string | undefined) {
@@ -20,7 +21,7 @@ export function useConnectionStatus(userId: string | undefined) {
     if (!userId) return;
     const { data, error: fetchError } = await supabase
       .from("platform_connection_status")
-      .select("platform, external_account_label, follower_count, connected_at, last_synced_at, last_sync_error")
+      .select("platform, external_account_label, follower_count, connected_at, last_synced_at, last_sync_error, has_analytics_scope")
       .eq("user_id", userId);
     if (fetchError) {
       // Surfaced instead of silently leaving `statuses` at its last-known

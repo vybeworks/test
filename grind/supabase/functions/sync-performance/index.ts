@@ -8,6 +8,7 @@ interface Connection {
   access_token: string;
   refresh_token: string | null;
   token_expires_at: string | null;
+  granted_scopes: string | null;
 }
 
 async function ensureFreshYoutubeToken(admin: AdminClient, conn: Connection): Promise<string> {
@@ -92,6 +93,8 @@ interface YoutubeSyncResult {
   synced: number;
   upsertErrors: string[];
   truncated: boolean;
+  analyticsScopeGranted: boolean;
+  videosWithSubscriberData: number;
 }
 
 async function fetchAllUploadVideoIds(
@@ -120,7 +123,56 @@ async function fetchAllUploadVideoIds(
   return { videoIds, truncated: Boolean(pageToken) };
 }
 
-async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToken: string): Promise<YoutubeSyncResult> {
+// Per-video subscriber gain/loss lives only in the separate YouTube Analytics
+// API (youtubeanalytics.googleapis.com), not the Data API v3 used everywhere
+// else here - it requires the yt-analytics.readonly scope, which older
+// connections won't have (see hasAnalyticsScope in syncYoutubeChannel).
+// Best-effort per chunk: a failed chunk just leaves those videos without
+// subscriber data rather than failing the whole sync, same pattern as
+// Instagram's fetchMediaReach.
+const YT_ANALYTICS_CHUNK_SIZE = 50;
+
+async function fetchVideoSubscriberDeltas(
+  videoIds: string[],
+  headers: Record<string, string>,
+  upsertErrors: string[]
+): Promise<Map<string, number>> {
+  const deltas = new Map<string, number>();
+  const today = new Date().toISOString().slice(0, 10);
+
+  for (const idChunk of chunk(videoIds, YT_ANALYTICS_CHUNK_SIZE)) {
+    const params = new URLSearchParams({
+      ids: "channel==MINE",
+      startDate: "2005-02-14", // before YouTube existed - safe lower bound for a channel's full lifetime
+      endDate: today,
+      metrics: "subscribersGained,subscribersLost",
+      dimensions: "video",
+      filters: `video==${idChunk.join(",")}`,
+      maxResults: String(YT_ANALYTICS_CHUNK_SIZE),
+    });
+    const resp = await fetch(`https://youtubeanalytics.googleapis.com/v2/reports?${params.toString()}`, { headers });
+    if (!resp.ok) {
+      const text = await resp.text();
+      console.error("sync-performance: YouTube Analytics fetch failed for a chunk:", text);
+      upsertErrors.push(`analytics chunk (${idChunk.length} videos): ${text}`);
+      continue;
+    }
+    const json = await resp.json();
+    for (const row of (json.rows ?? []) as [string, number, number][]) {
+      const [videoId, gained, lost] = row;
+      deltas.set(videoId, Number(gained ?? 0) - Number(lost ?? 0));
+    }
+  }
+
+  return deltas;
+}
+
+async function syncYoutubeChannel(
+  admin: AdminClient,
+  userId: string,
+  accessToken: string,
+  hasAnalyticsScope: boolean
+): Promise<YoutubeSyncResult> {
   const headers = { Authorization: `Bearer ${accessToken}` };
 
   const channelResp = await fetch(
@@ -144,11 +196,22 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
 
   const { videoIds, truncated } = await fetchAllUploadVideoIds(uploadsPlaylistId, headers);
   if (videoIds.length === 0) {
-    return { channelTitle, totalChannelVideos, subscriberCount, videosFound: 0, synced: 0, upsertErrors: [], truncated };
+    return {
+      channelTitle,
+      totalChannelVideos,
+      subscriberCount,
+      videosFound: 0,
+      synced: 0,
+      upsertErrors: [],
+      truncated,
+      analyticsScopeGranted: hasAnalyticsScope,
+      videosWithSubscriberData: 0,
+    };
   }
 
   let synced = 0;
   const upsertErrors: string[] = [];
+  const subscriberDeltas = hasAnalyticsScope ? await fetchVideoSubscriberDeltas(videoIds, headers, upsertErrors) : new Map<string, number>();
 
   for (const idBatch of chunk(videoIds, YT_PAGE_SIZE)) {
     const statsResp = await fetch(
@@ -170,7 +233,7 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
           views: Number(stats.viewCount ?? 0),
           likes: Number(stats.likeCount ?? 0),
           comments: Number(stats.commentCount ?? 0),
-          follows_gained: 0,
+          follows_gained: subscriberDeltas.get(video.id) ?? 0,
           note: video.snippet?.title ?? null,
           source: "youtube_api",
         },
@@ -184,7 +247,17 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
     }
   }
 
-  return { channelTitle, totalChannelVideos, subscriberCount, videosFound: videoIds.length, synced, upsertErrors, truncated };
+  return {
+    channelTitle,
+    totalChannelVideos,
+    subscriberCount,
+    videosFound: videoIds.length,
+    synced,
+    upsertErrors,
+    truncated,
+    analyticsScopeGranted: hasAnalyticsScope,
+    videosWithSubscriberData: subscriberDeltas.size,
+  };
 }
 
 // --- Instagram ---
@@ -289,7 +362,7 @@ Deno.serve(async (req) => {
   const admin = supabaseAdmin();
   const { data: connections, error } = await admin
     .from("platform_connections")
-    .select("user_id, platform, access_token, refresh_token, token_expires_at");
+    .select("user_id, platform, access_token, refresh_token, token_expires_at, granted_scopes");
 
   if (error) {
     return new Response(JSON.stringify({ error: error.message }), {
@@ -305,7 +378,8 @@ Deno.serve(async (req) => {
       let followerCount: number | null;
       if (conn.platform === "youtube") {
         const accessToken = await ensureFreshYoutubeToken(admin, conn);
-        result = await syncYoutubeChannel(admin, conn.user_id, accessToken);
+        const hasAnalyticsScope = Boolean(conn.granted_scopes?.includes("yt-analytics.readonly"));
+        result = await syncYoutubeChannel(admin, conn.user_id, accessToken, hasAnalyticsScope);
         followerCount = result.subscriberCount;
       } else if (conn.platform === "instagram") {
         const accessToken = await ensureFreshInstagramToken(admin, conn);
