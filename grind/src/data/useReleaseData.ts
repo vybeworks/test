@@ -110,17 +110,28 @@ export interface PerformanceEntry {
 export function usePerformanceEntries(userId: string | undefined) {
   const [entries, setEntries] = useState<PerformanceEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!userId) return;
-    const { data, error } = await supabase
+    const { data, error: fetchError } = await supabase
       .from("performance_entries")
       .select(
         "id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source, is_trial_reel, thumbnail_url, content_format"
       )
       .eq("user_id", userId)
       .order("post_date", { ascending: false });
-    if (!error && data) setEntries(data);
+    if (fetchError) {
+      // Surfaced instead of silently leaving `entries` at its last-known
+      // value - a failed fetch here used to look identical to "nothing
+      // logged yet," which is exactly wrong when entries actually exist and
+      // the query itself is broken (e.g. a column a migration hasn't been
+      // applied yet).
+      setError(fetchError.message);
+    } else if (data) {
+      setError(null);
+      setEntries(data);
+    }
     setLoading(false);
   }, [userId]);
 
@@ -163,7 +174,7 @@ export function usePerformanceEntries(userId: string | undefined) {
     return error?.message ?? null;
   };
 
-  return { entries, loading, addEntry, removeEntry, setTrialReelTag, refresh };
+  return { entries, loading, error, addEntry, removeEntry, setTrialReelTag, refresh };
 }
 
 /** Lightweight fetch of just the platform column, for the GRIND Score's stats component. */

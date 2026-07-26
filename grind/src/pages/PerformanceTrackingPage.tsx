@@ -76,7 +76,7 @@ function groupByDate(entries: PerformanceEntry[]): { date: string; items: Perfor
 
 export function PerformanceTrackingPage() {
   const { user } = useAuth();
-  const { entries, addEntry, removeEntry, setTrialReelTag } = usePerformanceEntries(user?.id);
+  const { entries, addEntry, removeEntry, setTrialReelTag, error: entriesError } = usePerformanceEntries(user?.id);
   const { statuses, error: connectionStatusError } = useConnectionStatus(user?.id);
 
   const [connectMessage, setConnectMessage] = useState<string | null>(null);
@@ -357,7 +357,13 @@ export function PerformanceTrackingPage() {
         <div style={{ fontSize: 12, color: "var(--muted-2)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
           Logged posts
         </div>
-        {visibleEntries.length === 0 && (
+        {entriesError && (
+          <div className="grind-card" style={{ padding: 14, marginBottom: 10, fontSize: 12, color: "var(--rose)" }}>
+            Couldn't load logged posts: {entriesError}. Your data may still be fine — this is a display error, not
+            necessarily data loss.
+          </div>
+        )}
+        {!entriesError && visibleEntries.length === 0 && (
           <div className="grind-card" style={{ padding: 20, textAlign: "center", color: "var(--muted-2)", fontSize: 13 }}>
             Nothing logged yet.
           </div>
