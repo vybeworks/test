@@ -139,6 +139,10 @@ alongside `0004`) if you're setting this up fresh rather than incrementally. Red
 `youtube-oauth-callback`, `instagram-oauth-callback`, and `sync-performance` after pulling this
 version - all three changed to populate `follower_count`.
 
+**Manual Trial Reel tagging**: run `0009_trial_reel.sql` (adds `performance_entries.is_trial_reel`).
+No secrets or redeploy needed - this is frontend + schema only, see "How performance tracking +
+the Release Toolkit are wired" below for what it does.
+
 ## Setting up the launch email
 
 A separate, manually-triggered piece: sends the "GRIND is live" email once, on demand, to
@@ -299,6 +303,13 @@ any client code.
 - **`performance_entries.source`** defaults to `'manual'` and already has `'instagram_api'` /
   `'youtube_api'` as valid values, so step 4's OAuth sync can write into this same table without
   a schema change - manual override stays available on every row regardless of source, per spec.
+- **Trial Reel tagging is manual-only, deliberately.** Instagram doesn't expose which posts are
+  "Trial Reels" (the non-follower-reach test format) anywhere in the public Graph API - confirmed
+  unbuildable via auto-detection, same category of gap as TikTok's missing analytics API.
+  `performance_entries.is_trial_reel` (migration `0009_trial_reel.sql`) lets you tag any Instagram
+  entry - manual or auto-synced - as a Trial Reel from the Track page, either when logging a new
+  entry or via a "Mark as Trial Reel" toggle on existing ones. A check constraint keeps the tag
+  Instagram-only. A "Trial Reels" view filter tab sections these out from the rest of the feed.
 
 ## How OAuth sync is wired
 

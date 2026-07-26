@@ -31,7 +31,7 @@ function todayStr() {
 
 export function PerformanceTrackingPage() {
   const { user } = useAuth();
-  const { entries, addEntry, removeEntry } = usePerformanceEntries(user?.id);
+  const { entries, addEntry, removeEntry, setTrialReelTag } = usePerformanceEntries(user?.id);
   const { statuses, error: connectionStatusError } = useConnectionStatus(user?.id);
 
   const [connectMessage, setConnectMessage] = useState<string | null>(null);
@@ -68,7 +68,7 @@ export function PerformanceTrackingPage() {
   // piece of state was the bug: clicking a platform button here looked like
   // it should switch the chart/list too, but it only ever affected the form.
   const [logPlatform, setLogPlatform] = useState<Platform>("tiktok");
-  const [viewFilter, setViewFilter] = useState<Platform | "all">("all");
+  const [viewFilter, setViewFilter] = useState<Platform | "all" | "trial_reels">("all");
   const [postDate, setPostDate] = useState(todayStr());
   const [contentType, setContentType] = useState("");
   const [views, setViews] = useState("");
@@ -76,6 +76,7 @@ export function PerformanceTrackingPage() {
   const [comments, setComments] = useState("");
   const [follows, setFollows] = useState("");
   const [note, setNote] = useState("");
+  const [isTrialReel, setIsTrialReel] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -92,6 +93,7 @@ export function PerformanceTrackingPage() {
       comments: Number(comments) || 0,
       follows_gained: Number(follows) || 0,
       note: note.trim() || null,
+      is_trial_reel: logPlatform === "instagram" && isTrialReel,
     });
     setBusy(false);
     if (message) {
@@ -103,9 +105,15 @@ export function PerformanceTrackingPage() {
     setComments("");
     setFollows("");
     setNote("");
+    setIsTrialReel(false);
   };
 
-  const visibleEntries = viewFilter === "all" ? entries : entries.filter((e) => e.platform === viewFilter);
+  const visibleEntries =
+    viewFilter === "all"
+      ? entries
+      : viewFilter === "trial_reels"
+        ? entries.filter((e) => e.is_trial_reel)
+        : entries.filter((e) => e.platform === viewFilter);
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "40px 20px 60px" }}>
@@ -173,10 +181,10 @@ export function PerformanceTrackingPage() {
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-        {(["all", "tiktok", "instagram", "youtube"] as const).map((p) => {
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+        {(["all", "tiktok", "instagram", "youtube", "trial_reels"] as const).map((p) => {
           const active = viewFilter === p;
-          const color = p === "all" ? "var(--ember)" : PLATFORM_META[p].color;
+          const color = p === "all" ? "var(--ember)" : p === "trial_reels" ? "var(--teal)" : PLATFORM_META[p].color;
           return (
             <button
               key={p}
@@ -192,7 +200,7 @@ export function PerformanceTrackingPage() {
                 cursor: "pointer",
               }}
             >
-              {p === "all" ? "All" : PLATFORM_META[p].label}
+              {p === "all" ? "All" : p === "trial_reels" ? "Trial Reels" : PLATFORM_META[p].label}
             </button>
           );
         })}
@@ -244,6 +252,13 @@ export function PerformanceTrackingPage() {
           <input type="number" min={0} placeholder="comments" value={comments} onChange={(e) => setComments(e.target.value)} style={inputStyle} />
           <input type="number" min={0} placeholder="follows gained" value={follows} onChange={(e) => setFollows(e.target.value)} style={inputStyle} />
         </div>
+
+        {logPlatform === "instagram" && (
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted-2)", marginBottom: 8, cursor: "pointer" }}>
+            <input type="checkbox" checked={isTrialReel} onChange={(e) => setIsTrialReel(e.target.checked)} />
+            This is a Trial Reel
+          </label>
+        )}
 
         <input placeholder="note (optional)" value={note} onChange={(e) => setNote(e.target.value)} style={{ ...inputStyle, width: "100%", marginBottom: 10 }} />
 
@@ -301,12 +316,43 @@ export function PerformanceTrackingPage() {
                         AUTO
                       </span>
                     )}
+                    {e.is_trial_reel && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 700,
+                          color: "var(--ember)",
+                          border: "1px solid var(--ember)",
+                          borderRadius: 6,
+                          padding: "1px 5px",
+                        }}
+                      >
+                        TRIAL REEL
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
                     {e.post_date} · {e.views.toLocaleString()} views · {e.likes.toLocaleString()} likes ·{" "}
                     {e.comments.toLocaleString()} comments · +{e.follows_gained.toLocaleString()} follows
                   </div>
                   {e.note && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{e.note}</div>}
+                  {e.platform === "instagram" && (
+                    <button
+                      onClick={() => setTrialReelTag(e.id, !e.is_trial_reel)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "var(--muted-2)",
+                        cursor: "pointer",
+                        fontSize: 11,
+                        padding: 0,
+                        marginTop: 4,
+                        textDecoration: "underline",
+                      }}
+                    >
+                      {e.is_trial_reel ? "Unmark Trial Reel" : "Mark as Trial Reel"}
+                    </button>
+                  )}
                 </div>
                 <button
                   onClick={() => removeEntry(e.id)}

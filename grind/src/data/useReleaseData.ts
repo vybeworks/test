@@ -102,6 +102,7 @@ export interface PerformanceEntry {
   follows_gained: number;
   note: string | null;
   source: "manual" | "instagram_api" | "youtube_api";
+  is_trial_reel: boolean;
 }
 
 export function usePerformanceEntries(userId: string | undefined) {
@@ -112,7 +113,7 @@ export function usePerformanceEntries(userId: string | undefined) {
     if (!userId) return;
     const { data, error } = await supabase
       .from("performance_entries")
-      .select("id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source")
+      .select("id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source, is_trial_reel")
       .eq("user_id", userId)
       .order("post_date", { ascending: false });
     if (!error && data) setEntries(data);
@@ -132,6 +133,7 @@ export function usePerformanceEntries(userId: string | undefined) {
     comments: number;
     follows_gained: number;
     note: string | null;
+    is_trial_reel: boolean;
   }) => {
     if (!userId) return null;
     const { error } = await supabase.from("performance_entries").insert({ user_id: userId, ...entry });
@@ -145,7 +147,19 @@ export function usePerformanceEntries(userId: string | undefined) {
     await refresh();
   };
 
-  return { entries, loading, addEntry, removeEntry, refresh };
+  /** Toggles the Trial Reel tag on an existing entry - manual or auto-synced - without a full edit form. */
+  const setTrialReelTag = async (id: string, isTrialReel: boolean) => {
+    if (!userId) return null;
+    const { error } = await supabase
+      .from("performance_entries")
+      .update({ is_trial_reel: isTrialReel })
+      .eq("user_id", userId)
+      .eq("id", id);
+    if (!error) await refresh();
+    return error?.message ?? null;
+  };
+
+  return { entries, loading, addEntry, removeEntry, setTrialReelTag, refresh };
 }
 
 /** Lightweight fetch of just the platform column, for the GRIND Score's stats component. */
