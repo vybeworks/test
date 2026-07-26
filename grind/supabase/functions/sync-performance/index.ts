@@ -236,6 +236,7 @@ async function syncYoutubeChannel(
           follows_gained: subscriberDeltas.get(video.id) ?? 0,
           note: video.snippet?.title ?? null,
           source: "youtube_api",
+          thumbnail_url: video.snippet?.thumbnails?.medium?.url ?? video.snippet?.thumbnails?.default?.url ?? null,
         },
         { onConflict: "user_id,platform,external_post_id" }
       );
@@ -281,7 +282,7 @@ interface InstagramSyncResult {
 async function fetchInstagramMedia(accessToken: string): Promise<{ items: any[]; truncated: boolean }> {
   const items: any[] = [];
   let nextUrl: string | null =
-    `https://graph.instagram.com/me/media?fields=id,caption,media_type,media_product_type,timestamp,like_count,comments_count&limit=${INSTAGRAM_PAGE_SIZE}&access_token=${accessToken}`;
+    `https://graph.instagram.com/me/media?fields=id,caption,media_type,media_product_type,timestamp,like_count,comments_count,media_url,thumbnail_url&limit=${INSTAGRAM_PAGE_SIZE}&access_token=${accessToken}`;
 
   while (nextUrl && items.length < INSTAGRAM_MAX_MEDIA) {
     const resp = await fetch(nextUrl);
@@ -327,6 +328,12 @@ async function syncInstagramAccount(admin: AdminClient, userId: string, accessTo
     const { views, error: reachError } = await fetchMediaReach(media.id, accessToken);
     if (reachError) upsertErrors.push(`${media.id} (reach): ${reachError}`);
 
+    // `media_url` is a raw video file for VIDEO/reels, not something an <img>
+    // tag can render - `thumbnail_url` is the actual cover image for those.
+    // For IMAGE/CAROUSEL_ALBUM, `media_url` is already a displayable image.
+    const thumbnailUrl: string | null =
+      (media.media_type === "VIDEO" ? media.thumbnail_url : media.media_url) ?? null;
+
     const { error } = await admin.from("performance_entries").upsert(
       {
         user_id: userId,
@@ -340,6 +347,7 @@ async function syncInstagramAccount(admin: AdminClient, userId: string, accessTo
         follows_gained: 0,
         note: media.caption ? String(media.caption).slice(0, 200) : null,
         source: "instagram_api",
+        thumbnail_url: thumbnailUrl,
       },
       { onConflict: "user_id,platform,external_post_id" }
     );

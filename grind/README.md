@@ -184,6 +184,18 @@ version - all three changed to populate `follower_count`.
 No secrets or redeploy needed - this is frontend + schema only, see "How performance tracking +
 the Release Toolkit are wired" below for what it does.
 
+**Post thumbnails**: run `0011_thumbnail_url.sql` (adds `performance_entries.thumbnail_url`), then
+redeploy `sync-performance` - it now requests each post's cover image alongside the stats it
+already pulled, no new scope needed on either platform:
+
+```
+supabase functions deploy sync-performance --no-verify-jwt
+```
+
+Existing synced rows won't have a thumbnail until the next sync runs (every 6 hours, or trigger
+one early the same way as before). Manual entries never have one - there's no API to pull an
+image from - and show a small content-type icon instead.
+
 ## Setting up the launch email
 
 A separate, manually-triggered piece: sends the "GRIND is live" email once, on demand, to
@@ -351,6 +363,13 @@ any client code.
   entry - manual or auto-synced - as a Trial Reel from the Track page, either when logging a new
   entry or via a "Mark as Trial Reel" toggle on existing ones. A check constraint keeps the tag
   Instagram-only. A "Trial Reels" view filter tab sections these out from the rest of the feed.
+- **Logged posts show each post's real cover image** (`performance_entries.thumbnail_url`, migration
+  `0011_thumbnail_url.sql`) - YouTube's `snippet.thumbnails` and Instagram's `media_url`/
+  `thumbnail_url` (the latter for video/Reels, since `media_url` on those is the raw video file,
+  not something an `<img>` can render) were already available in each sync's existing API calls,
+  no new scope needed. Manual entries fall back to a content-type icon since there's no API to
+  pull an image from. The list is also grouped under per-date headers ("Today", "Yesterday", then
+  calendar dates) instead of repeating the date on every row.
 
 ## How OAuth sync is wired
 

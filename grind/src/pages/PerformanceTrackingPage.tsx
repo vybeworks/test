@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthProvider";
-import { usePerformanceEntries } from "../data/useReleaseData";
+import { usePerformanceEntries, type PerformanceEntry } from "../data/useReleaseData";
 import { connectInstagram, connectYoutube, useConnectionStatus } from "../data/useConnections";
 import { PerformanceTrendChart } from "../components/PerformanceTrendChart";
 import { PLATFORM_META, type Platform } from "../lib/releaseToolkit";
@@ -40,6 +40,30 @@ function formatFollowsDelta(n: number): string {
 // terminology, same underlying `follows_gained` column.
 function followUnitLabel(platform: Platform): string {
   return platform === "youtube" ? "subs" : "follows";
+}
+
+function formatDateHeader(dateStr: string): string {
+  const today = todayStr();
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  if (dateStr === today) return "Today";
+  if (dateStr === yesterday) return "Yesterday";
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/** Entries already arrive sorted by post_date descending (see usePerformanceEntries) - this just
+ * buckets consecutive same-date entries under one header instead of repeating the date per row. */
+function groupByDate(entries: PerformanceEntry[]): { date: string; items: PerformanceEntry[] }[] {
+  const groups: { date: string; items: PerformanceEntry[] }[] = [];
+  for (const entry of entries) {
+    const last = groups[groups.length - 1];
+    if (last && last.date === entry.post_date) last.items.push(entry);
+    else groups.push({ date: entry.post_date, items: [entry] });
+  }
+  return groups;
 }
 
 export function PerformanceTrackingPage() {
@@ -330,77 +354,129 @@ export function PerformanceTrackingPage() {
             Nothing logged yet.
           </div>
         )}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {visibleEntries.map((e) => {
-            const type = CONTENT_TYPES.find((t) => t.key === e.content_type);
-            return (
-              <div key={e.id} className="grind-card" style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: PLATFORM_META[e.platform].color, flexShrink: 0 }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-                    {PLATFORM_META[e.platform].label}
-                    {type ? ` · ${type.icon} ${type.label}` : ""}
-                    {e.source !== "manual" && (
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          color: "var(--teal)",
-                          border: "1px solid var(--teal)",
-                          borderRadius: 6,
-                          padding: "1px 5px",
-                        }}
-                      >
-                        AUTO
-                      </span>
-                    )}
-                    {e.is_trial_reel && (
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          color: "var(--ember)",
-                          border: "1px solid var(--ember)",
-                          borderRadius: 6,
-                          padding: "1px 5px",
-                        }}
-                      >
-                        TRIAL REEL
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
-                    {e.post_date} · {e.views.toLocaleString()} views · {e.likes.toLocaleString()} likes ·{" "}
-                    {e.comments.toLocaleString()} comments · {formatFollowsDelta(e.follows_gained)} {followUnitLabel(e.platform)}
-                  </div>
-                  {e.note && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{e.note}</div>}
-                  {e.platform === "instagram" && (
-                    <button
-                      onClick={() => setTrialReelTag(e.id, !e.is_trial_reel)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        color: "var(--muted-2)",
-                        cursor: "pointer",
-                        fontSize: 11,
-                        padding: 0,
-                        marginTop: 4,
-                        textDecoration: "underline",
-                      }}
-                    >
-                      {e.is_trial_reel ? "Unmark Trial Reel" : "Mark as Trial Reel"}
-                    </button>
-                  )}
-                </div>
-                <button
-                  onClick={() => removeEntry(e.id)}
-                  style={{ background: "none", border: "none", color: "#4b4f5c", cursor: "pointer", flexShrink: 0 }}
-                >
-                  ✕
-                </button>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {groupByDate(visibleEntries).map((group) => (
+            <div key={group.date}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted-2)", marginBottom: 6, paddingLeft: 2 }}>
+                {formatDateHeader(group.date)}
               </div>
-            );
-          })}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {group.items.map((e) => {
+                  const type = CONTENT_TYPES.find((t) => t.key === e.content_type);
+                  return (
+                    <div
+                      key={e.id}
+                      className="grind-card"
+                      style={{ padding: 0, display: "flex", alignItems: "stretch", overflow: "hidden" }}
+                    >
+                      <span style={{ width: 4, background: PLATFORM_META[e.platform].color, flexShrink: 0 }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", flex: 1, minWidth: 0 }}>
+                        {e.thumbnail_url ? (
+                          <img
+                            src={e.thumbnail_url}
+                            alt=""
+                            style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              width: 48,
+                              height: 48,
+                              borderRadius: 8,
+                              background: "var(--surface-2)",
+                              border: `1px solid ${PLATFORM_META[e.platform].color}55`,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 18,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {type?.icon ?? "🎵"}
+                          </div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            {PLATFORM_META[e.platform].label}
+                            {type ? ` · ${type.icon} ${type.label}` : ""}
+                            {e.source !== "manual" && (
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 700,
+                                  color: "var(--teal)",
+                                  border: "1px solid var(--teal)",
+                                  borderRadius: 6,
+                                  padding: "1px 5px",
+                                }}
+                              >
+                                AUTO
+                              </span>
+                            )}
+                            {e.is_trial_reel && (
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 700,
+                                  color: "var(--ember)",
+                                  border: "1px solid var(--ember)",
+                                  borderRadius: 6,
+                                  padding: "1px 5px",
+                                }}
+                              >
+                                TRIAL REEL
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
+                            {e.views.toLocaleString()} views · {e.likes.toLocaleString()} likes · {e.comments.toLocaleString()}{" "}
+                            comments · {formatFollowsDelta(e.follows_gained)} {followUnitLabel(e.platform)}
+                          </div>
+                          {e.note && (
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: "var(--muted)",
+                                marginTop: 2,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {e.note}
+                            </div>
+                          )}
+                          {e.platform === "instagram" && (
+                            <button
+                              onClick={() => setTrialReelTag(e.id, !e.is_trial_reel)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "var(--muted-2)",
+                                cursor: "pointer",
+                                fontSize: 11,
+                                padding: 0,
+                                marginTop: 4,
+                                textDecoration: "underline",
+                              }}
+                            >
+                              {e.is_trial_reel ? "Unmark Trial Reel" : "Mark as Trial Reel"}
+                            </button>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => removeEntry(e.id)}
+                          style={{ background: "none", border: "none", color: "#4b4f5c", cursor: "pointer", flexShrink: 0 }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
