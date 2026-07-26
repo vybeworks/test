@@ -120,7 +120,13 @@ export function usePerformanceEntries(userId: string | undefined) {
         "id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source, is_trial_reel, thumbnail_url, content_format"
       )
       .eq("user_id", userId)
-      .order("post_date", { ascending: false });
+      .order("post_date", { ascending: false })
+      // Without an explicit limit this silently falls back to Supabase's
+      // project-level default (commonly 1,000, but configurable lower) -
+      // a query returning fewer rows than actually exist looks identical to
+      // "that's all of them," so make the ceiling explicit and generous
+      // instead of trusting an invisible project setting.
+      .limit(5000);
     if (fetchError) {
       // Surfaced instead of silently leaving `entries` at its last-known
       // value - a failed fetch here used to look identical to "nothing
