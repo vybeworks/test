@@ -63,7 +63,12 @@ export function PerformanceTrackingPage() {
     // on success this navigates away, so no need to clear `connecting`
   };
 
-  const [platform, setPlatform] = useState<Platform>("tiktok");
+  // What a NEW manual entry gets logged against - independent of what's
+  // currently displayed below (see viewFilter). Conflating these into one
+  // piece of state was the bug: clicking a platform button here looked like
+  // it should switch the chart/list too, but it only ever affected the form.
+  const [logPlatform, setLogPlatform] = useState<Platform>("tiktok");
+  const [viewFilter, setViewFilter] = useState<Platform | "all">("all");
   const [postDate, setPostDate] = useState(todayStr());
   const [contentType, setContentType] = useState("");
   const [views, setViews] = useState("");
@@ -79,7 +84,7 @@ export function PerformanceTrackingPage() {
     setBusy(true);
     setError(null);
     const message = await addEntry({
-      platform,
+      platform: logPlatform,
       post_date: postDate,
       content_type: contentType || null,
       views: Number(views) || 0,
@@ -99,6 +104,8 @@ export function PerformanceTrackingPage() {
     setFollows("");
     setNote("");
   };
+
+  const visibleEntries = viewFilter === "all" ? entries : entries.filter((e) => e.platform === viewFilter);
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "40px 20px 60px" }}>
@@ -155,21 +162,47 @@ export function PerformanceTrackingPage() {
         ))}
       </div>
 
-      <PerformanceTrendChart entries={entries} />
+      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        {(["all", "tiktok", "instagram", "youtube"] as const).map((p) => {
+          const active = viewFilter === p;
+          const color = p === "all" ? "var(--ember)" : PLATFORM_META[p].color;
+          return (
+            <button
+              key={p}
+              onClick={() => setViewFilter(p)}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 20,
+                border: active ? `1px solid ${color}` : "1px solid var(--border)",
+                background: active ? `${color}22` : "var(--surface-2)",
+                color: "var(--text)",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {p === "all" ? "All" : PLATFORM_META[p].label}
+            </button>
+          );
+        })}
+      </div>
+
+      <PerformanceTrendChart entries={visibleEntries} />
 
       <form onSubmit={submit} className="grind-card" style={{ padding: 16, marginTop: 16 }}>
+        <div style={{ fontSize: 11, color: "var(--muted-2)", marginBottom: 8 }}>Log a new entry for:</div>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           {(Object.keys(PLATFORM_META) as Platform[]).map((p) => (
             <button
               key={p}
               type="button"
-              onClick={() => setPlatform(p)}
+              onClick={() => setLogPlatform(p)}
               style={{
                 flex: 1,
                 padding: "8px 0",
                 borderRadius: 8,
-                border: platform === p ? `1px solid ${PLATFORM_META[p].color}` : "1px solid var(--border)",
-                background: platform === p ? `${PLATFORM_META[p].color}22` : "var(--surface-2)",
+                border: logPlatform === p ? `1px solid ${PLATFORM_META[p].color}` : "1px solid var(--border)",
+                background: logPlatform === p ? `${PLATFORM_META[p].color}22` : "var(--surface-2)",
                 color: "var(--text)",
                 fontSize: 12,
                 fontWeight: 600,
@@ -180,7 +213,7 @@ export function PerformanceTrackingPage() {
             </button>
           ))}
         </div>
-        <div style={{ fontSize: 11, color: "var(--muted-2)", marginBottom: 12 }}>{PLATFORM_NOTE[platform]}</div>
+        <div style={{ fontSize: 11, color: "var(--muted-2)", marginBottom: 12 }}>{PLATFORM_NOTE[logPlatform]}</div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
           <input type="date" value={postDate} onChange={(e) => setPostDate(e.target.value)} style={inputStyle} />
@@ -228,13 +261,13 @@ export function PerformanceTrackingPage() {
         <div style={{ fontSize: 12, color: "var(--muted-2)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
           Logged posts
         </div>
-        {entries.length === 0 && (
+        {visibleEntries.length === 0 && (
           <div className="grind-card" style={{ padding: 20, textAlign: "center", color: "var(--muted-2)", fontSize: 13 }}>
             Nothing logged yet.
           </div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {entries.map((e) => {
+          {visibleEntries.map((e) => {
             const type = CONTENT_TYPES.find((t) => t.key === e.content_type);
             return (
               <div key={e.id} className="grind-card" style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
