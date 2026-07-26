@@ -42,6 +42,14 @@ function followUnitLabel(platform: Platform): string {
   return platform === "youtube" ? "subs" : "follows";
 }
 
+const CONTENT_FORMAT_LABEL: Record<NonNullable<PerformanceEntry["content_format"]>, string> = {
+  reel: "REEL",
+  feed: "POST",
+  story: "STORY",
+  short: "SHORT",
+  video: "VIDEO",
+};
+
 function formatDateHeader(dateStr: string): string {
   const today = todayStr();
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
@@ -370,25 +378,25 @@ export function PerformanceTrackingPage() {
                       style={{ padding: 0, display: "flex", alignItems: "stretch", overflow: "hidden" }}
                     >
                       <span style={{ width: 4, background: PLATFORM_META[e.platform].color, flexShrink: 0 }} />
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, flex: 1, minWidth: 0 }}>
                         {e.thumbnail_url ? (
                           <img
                             src={e.thumbnail_url}
                             alt=""
-                            style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
+                            style={{ width: 72, height: 72, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
                           />
                         ) : (
                           <div
                             style={{
-                              width: 48,
-                              height: 48,
+                              width: 72,
+                              height: 72,
                               borderRadius: 8,
                               background: "var(--surface-2)",
                               border: `1px solid ${PLATFORM_META[e.platform].color}55`,
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
-                              fontSize: 18,
+                              fontSize: 26,
                               flexShrink: 0,
                             }}
                           >
@@ -399,6 +407,20 @@ export function PerformanceTrackingPage() {
                           <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                             {PLATFORM_META[e.platform].label}
                             {type ? ` · ${type.icon} ${type.label}` : ""}
+                            {e.content_format && (
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 700,
+                                  color: "var(--muted-2)",
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 6,
+                                  padding: "1px 5px",
+                                }}
+                              >
+                                {CONTENT_FORMAT_LABEL[e.content_format]}
+                              </span>
+                            )}
                             {e.source !== "manual" && (
                               <span
                                 style={{

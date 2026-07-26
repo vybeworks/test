@@ -104,6 +104,7 @@ export interface PerformanceEntry {
   source: "manual" | "instagram_api" | "youtube_api";
   is_trial_reel: boolean;
   thumbnail_url: string | null;
+  content_format: "reel" | "feed" | "story" | "short" | "video" | null;
 }
 
 export function usePerformanceEntries(userId: string | undefined) {
@@ -115,7 +116,7 @@ export function usePerformanceEntries(userId: string | undefined) {
     const { data, error } = await supabase
       .from("performance_entries")
       .select(
-        "id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source, is_trial_reel, thumbnail_url"
+        "id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source, is_trial_reel, thumbnail_url, content_format"
       )
       .eq("user_id", userId)
       .order("post_date", { ascending: false });

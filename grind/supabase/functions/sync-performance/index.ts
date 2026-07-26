@@ -73,6 +73,23 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+// The Data API has no official "is this a Short" field (confirmed - Google's
+// own issue tracker has an open, unresolved request for one). Duration is the
+// best available heuristic: YouTube raised the Shorts length cap from 60s to
+// 3 minutes in October 2024, so anything at or under that is treated as a
+// Short. Not airtight (a long-form video happening to run under 3 minutes
+// would be misclassified), but it's the same heuristic most third-party
+// tools use in the absence of a real flag.
+const SHORTS_MAX_SECONDS = 180;
+
+function parseIso8601DurationSeconds(duration: string | undefined): number | null {
+  if (!duration) return null;
+  const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(duration);
+  if (!match) return null;
+  const [, h, m, s] = match;
+  return (Number(h ?? 0) * 3600) + (Number(m ?? 0) * 60) + Number(s ?? 0);
+}
+
 // --- YouTube ---
 // playlistItems/videos endpoints cap out at 50 items per request, so pulling
 // a whole history means paging through with pageToken. Re-syncing every
@@ -215,7 +232,7 @@ async function syncYoutubeChannel(
 
   for (const idBatch of chunk(videoIds, YT_PAGE_SIZE)) {
     const statsResp = await fetch(
-      `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${idBatch.join(",")}`,
+      `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet,contentDetails&id=${idBatch.join(",")}`,
       { headers }
     );
     if (!statsResp.ok) throw new Error(`videos.list failed: ${await statsResp.text()}`);
@@ -223,6 +240,9 @@ async function syncYoutubeChannel(
 
     for (const video of statsJson.items ?? []) {
       const stats = video.statistics ?? {};
+      const durationSeconds = parseIso8601DurationSeconds(video.contentDetails?.duration);
+      const contentFormat =
+        durationSeconds === null ? null : durationSeconds <= SHORTS_MAX_SECONDS ? "short" : "video";
       const { error } = await admin.from("performance_entries").upsert(
         {
           user_id: userId,
@@ -237,6 +257,7 @@ async function syncYoutubeChannel(
           note: video.snippet?.title ?? null,
           source: "youtube_api",
           thumbnail_url: video.snippet?.thumbnails?.medium?.url ?? video.snippet?.thumbnails?.default?.url ?? null,
+          content_format: contentFormat,
         },
         { onConflict: "user_id,platform,external_post_id" }
       );
@@ -334,6 +355,11 @@ async function syncInstagramAccount(admin: AdminClient, userId: string, accessTo
     const thumbnailUrl: string | null =
       (media.media_type === "VIDEO" ? media.thumbnail_url : media.media_url) ?? null;
 
+    // media_product_type is Instagram's own distinction between a Reel and a
+    // regular feed post - already in the fields list above, no extra call.
+    const contentFormat: "reel" | "story" | "feed" =
+      media.media_product_type === "REELS" ? "reel" : media.media_product_type === "STORY" ? "story" : "feed";
+
     const { error } = await admin.from("performance_entries").upsert(
       {
         user_id: userId,
@@ -348,6 +374,7 @@ async function syncInstagramAccount(admin: AdminClient, userId: string, accessTo
         note: media.caption ? String(media.caption).slice(0, 200) : null,
         source: "instagram_api",
         thumbnail_url: thumbnailUrl,
+        content_format: contentFormat,
       },
       { onConflict: "user_id,platform,external_post_id" }
     );

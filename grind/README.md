@@ -196,6 +196,21 @@ Existing synced rows won't have a thumbnail until the next sync runs (every 6 ho
 one early the same way as before). Manual entries never have one - there's no API to pull an
 image from - and show a small content-type icon instead.
 
+**Reel/Short vs. regular post/video badge**: run `0012_content_format.sql` (adds
+`performance_entries.content_format`), then redeploy `sync-performance`:
+
+```
+supabase functions deploy sync-performance --no-verify-jwt
+```
+
+Instagram's distinction is exact - `media_product_type` (already in the existing fields list) is
+Instagram's own tag, `REELS` vs. `FEED` vs. `STORY`. **YouTube's is a heuristic, flagged
+honestly**: the Data API has no official "is this a Short" field (there's a long-standing, still
+open request for one on Google's issue tracker) - so a video counts as a Short if its
+`contentDetails.duration` is ≤3 minutes, matching the cap YouTube raised Shorts to in October
+2024. This will misclassify a genuine long-form video that happens to run under 3 minutes as a
+Short - acceptable most of the time, worth knowing about if a specific video's badge looks wrong.
+
 ## Setting up the launch email
 
 A separate, manually-triggered piece: sends the "GRIND is live" email once, on demand, to
@@ -370,6 +385,13 @@ any client code.
   no new scope needed. Manual entries fall back to a content-type icon since there's no API to
   pull an image from. The list is also grouped under per-date headers ("Today", "Yesterday", then
   calendar dates) instead of repeating the date on every row.
+- **`performance_entries.content_format`** (migration `0012_content_format.sql`) is deliberately
+  separate from `content_type` - the latter is the user's own manual content-rhythm
+  categorization (reel/photo/song/etc, used for streak tracking), the former is a platform-native
+  post-format badge (Reel/Post, Short/Video) detected from the sync itself. Instagram's is exact
+  (`media_product_type`); YouTube's is a documented heuristic (`contentDetails.duration` ≤ 3
+  minutes), since the Data API has no official Shorts flag - see "Reel/Short vs. regular
+  post/video badge" above for the honest caveat on that one.
 
 ## How OAuth sync is wired
 
