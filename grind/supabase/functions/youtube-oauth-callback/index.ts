@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
     }
     const tokenJson = await tokenResp.json();
 
-    const channelResp = await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", {
+    const channelResp = await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true", {
       headers: { Authorization: `Bearer ${tokenJson.access_token}` },
     });
     if (!channelResp.ok) {
@@ -54,6 +54,13 @@ Deno.serve(async (req) => {
     const channelJson = await channelResp.json();
     const channel = channelJson.items?.[0];
     if (!channel) return redirectToApp("error", "youtube_no_channel");
+
+    // Populate the follower/subscriber count immediately on connect, rather
+    // than leaving it null until the next scheduled sync (up to 6h away).
+    const subscriberCount: number | null =
+      channel.statistics?.hiddenSubscriberCount || channel.statistics?.subscriberCount === undefined
+        ? null
+        : Number(channel.statistics.subscriberCount);
 
     const admin = supabaseAdmin();
     const tokenExpiresAt = new Date(Date.now() + tokenJson.expires_in * 1000).toISOString();
@@ -91,6 +98,7 @@ Deno.serve(async (req) => {
         user_id: userId,
         platform: "youtube",
         external_account_label: channel.snippet?.title ?? null,
+        follower_count: subscriberCount,
         connected_at: new Date().toISOString(),
         last_synced_at: null,
         last_sync_error: null,

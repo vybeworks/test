@@ -132,7 +132,12 @@ export function PerformanceTrackingPage() {
               <div style={{ fontSize: 13, fontWeight: 600 }}>{PLATFORM_META[key].label}</div>
               {statuses[key] ? (
                 <div style={{ fontSize: 11, color: "var(--muted-2)" }}>
-                  {statuses[key]!.external_account_label ?? "Connected"} · synced {timeAgo(statuses[key]!.last_synced_at)}
+                  {statuses[key]!.external_account_label ?? "Connected"}
+                  {statuses[key]!.follower_count !== null
+                    ? ` · ${statuses[key]!.follower_count!.toLocaleString()} ${key === "youtube" ? "subscribers" : "followers"}`
+                    : ""}
+                  {" · synced "}
+                  {timeAgo(statuses[key]!.last_synced_at)}
                   {statuses[key]!.last_sync_error ? " · last sync failed" : ""}
                 </div>
               ) : (

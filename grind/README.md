@@ -132,6 +132,13 @@ in the response's `upsertErrors`), but the metric name itself may need adjusting
 real response from your account, the same way YouTube needed two rounds of fixes after the first
 real test.
 
+**Follow-up fix**: the `ON CONFLICT`/pagination fixes from the YouTube setup, plus the
+account-level follower/subscriber count added afterward, live in
+`0005_fix_performance_entries_conflict.sql` and `0008_follower_count.sql` - run both (in order,
+alongside `0004`) if you're setting this up fresh rather than incrementally. Redeploy
+`youtube-oauth-callback`, `instagram-oauth-callback`, and `sync-performance` after pulling this
+version - all three changed to populate `follower_count`.
+
 ## Setting up the launch email
 
 A separate, manually-triggered piece: sends the "GRIND is live" email once, on demand, to
@@ -347,6 +354,18 @@ Supabase Edge Functions (`supabase/functions/`) - the first server-side code in 
   failing doesn't fail the sync; it leaves that post's views at 0 with the specific error surfaced
   in `upsertErrors`, the same diagnostic pattern that caught YouTube's `ON CONFLICT` and 15-video
   issues early rather than failing silently.
+- **The Track tab's platform buttons had a real bug**: they were only ever the manual-entry
+  form's "log against which platform" selector, but visually looked like tabs - clicking Instagram
+  or TikTok never touched what the chart or entries list displayed, both of which always showed
+  every platform unfiltered. Fixed by splitting the single conflated `platform` state into
+  `logPlatform` (the form's target) and `viewFilter` (a real All/TikTok/Instagram/YouTube display
+  filter, new).
+- **`platform_connection_status.follower_count`** is a deliberately separate concept from
+  `performance_entries.follows_gained`: an account-level current total (YouTube `subscriberCount`,
+  Instagram `followers_count`), not per-post attribution - neither platform's API attributes new
+  followers to a specific post at all, so `follows_gained` stays `0` on every synced row by
+  design, not by bug. Populated both immediately on connect (in the OAuth callbacks) and on every
+  scheduled sync, so it doesn't sit null for up to 6 hours after connecting.
 
 ## How the launch email is wired
 

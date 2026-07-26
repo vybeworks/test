@@ -87,6 +87,7 @@ const YT_MAX_PAGES = 40; // up to 2,000 videos per sync
 interface YoutubeSyncResult {
   channelTitle: string | null;
   totalChannelVideos: number | null;
+  subscriberCount: number | null;
   videosFound: number;
   synced: number;
   upsertErrors: string[];
@@ -132,12 +133,18 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
   const channelTitle: string | null = channel?.snippet?.title ?? null;
   const totalChannelVideos: number | null =
     channel?.statistics?.videoCount !== undefined ? Number(channel.statistics.videoCount) : null;
+  // Null (not 0) if the channel has hidden its subscriber count -
+  // channel.statistics.hiddenSubscriberCount is true in that case.
+  const subscriberCount: number | null =
+    channel?.statistics?.hiddenSubscriberCount || channel?.statistics?.subscriberCount === undefined
+      ? null
+      : Number(channel.statistics.subscriberCount);
   const uploadsPlaylistId = channel?.contentDetails?.relatedPlaylists?.uploads;
   if (!uploadsPlaylistId) throw new Error(`no uploads playlist found (channel: ${channelTitle ?? "none returned"})`);
 
   const { videoIds, truncated } = await fetchAllUploadVideoIds(uploadsPlaylistId, headers);
   if (videoIds.length === 0) {
-    return { channelTitle, totalChannelVideos, videosFound: 0, synced: 0, upsertErrors: [], truncated };
+    return { channelTitle, totalChannelVideos, subscriberCount, videosFound: 0, synced: 0, upsertErrors: [], truncated };
   }
 
   let synced = 0;
@@ -177,7 +184,7 @@ async function syncYoutubeChannel(admin: AdminClient, userId: string, accessToke
     }
   }
 
-  return { channelTitle, totalChannelVideos, videosFound: videoIds.length, synced, upsertErrors, truncated };
+  return { channelTitle, totalChannelVideos, subscriberCount, videosFound: videoIds.length, synced, upsertErrors, truncated };
 }
 
 // --- Instagram ---
@@ -191,6 +198,7 @@ const INSTAGRAM_MAX_MEDIA = 100;
 
 interface InstagramSyncResult {
   username: string | null;
+  followersCount: number | null;
   mediaFound: number;
   synced: number;
   upsertErrors: string[];
@@ -227,13 +235,16 @@ async function fetchMediaReach(mediaId: string, accessToken: string): Promise<{ 
 }
 
 async function syncInstagramAccount(admin: AdminClient, userId: string, accessToken: string): Promise<InstagramSyncResult> {
-  const meResp = await fetch(`https://graph.instagram.com/me?fields=id,username&access_token=${accessToken}`);
+  const meResp = await fetch(
+    `https://graph.instagram.com/me?fields=id,username,followers_count&access_token=${accessToken}`
+  );
   if (!meResp.ok) throw new Error(`account lookup failed: ${await meResp.text()}`);
   const me = await meResp.json();
+  const followersCount: number | null = me.followers_count !== undefined ? Number(me.followers_count) : null;
 
   const { items, truncated } = await fetchInstagramMedia(accessToken);
   if (items.length === 0) {
-    return { username: me.username ?? null, mediaFound: 0, synced: 0, upsertErrors: [], truncated };
+    return { username: me.username ?? null, followersCount, mediaFound: 0, synced: 0, upsertErrors: [], truncated };
   }
 
   let synced = 0;
@@ -266,7 +277,7 @@ async function syncInstagramAccount(admin: AdminClient, userId: string, accessTo
     }
   }
 
-  return { username: me.username ?? null, mediaFound: items.length, synced, upsertErrors, truncated };
+  return { username: me.username ?? null, followersCount, mediaFound: items.length, synced, upsertErrors, truncated };
 }
 
 Deno.serve(async (req) => {
@@ -291,18 +302,27 @@ Deno.serve(async (req) => {
   for (const conn of (connections ?? []) as Connection[]) {
     try {
       let result: YoutubeSyncResult | InstagramSyncResult;
+      let followerCount: number | null;
       if (conn.platform === "youtube") {
         const accessToken = await ensureFreshYoutubeToken(admin, conn);
         result = await syncYoutubeChannel(admin, conn.user_id, accessToken);
+        followerCount = result.subscriberCount;
       } else if (conn.platform === "instagram") {
         const accessToken = await ensureFreshInstagramToken(admin, conn);
         result = await syncInstagramAccount(admin, conn.user_id, accessToken);
+        followerCount = result.followersCount;
       } else {
         continue;
       }
 
       await admin.from("platform_connection_status").upsert(
-        { user_id: conn.user_id, platform: conn.platform, last_synced_at: new Date().toISOString(), last_sync_error: null },
+        {
+          user_id: conn.user_id,
+          platform: conn.platform,
+          follower_count: followerCount,
+          last_synced_at: new Date().toISOString(),
+          last_sync_error: null,
+        },
         { onConflict: "user_id,platform" }
       );
       results.push({ user_id: conn.user_id, platform: conn.platform, ...result });

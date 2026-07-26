@@ -5,6 +5,7 @@ import type { Platform } from "../lib/releaseToolkit";
 export interface ConnectionStatus {
   platform: Platform;
   external_account_label: string | null;
+  follower_count: number | null;
   connected_at: string | null;
   last_synced_at: string | null;
   last_sync_error: string | null;
@@ -18,7 +19,7 @@ export function useConnectionStatus(userId: string | undefined) {
     if (!userId) return;
     const { data, error } = await supabase
       .from("platform_connection_status")
-      .select("platform, external_account_label, connected_at, last_synced_at, last_sync_error")
+      .select("platform, external_account_label, follower_count, connected_at, last_synced_at, last_sync_error")
       .eq("user_id", userId);
     if (!error && data) {
       const map: Partial<Record<Platform, ConnectionStatus>> = {};

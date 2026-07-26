@@ -60,13 +60,16 @@ Deno.serve(async (req) => {
     const longTokenJson = await longTokenResp.json();
 
     const meResp = await fetch(
-      `https://graph.instagram.com/me?fields=id,username&access_token=${longTokenJson.access_token}`
+      `https://graph.instagram.com/me?fields=id,username,followers_count&access_token=${longTokenJson.access_token}`
     );
     if (!meResp.ok) {
       console.error("instagram-oauth-callback: account lookup failed:", await meResp.text());
       return redirectToApp("error", "instagram_account_lookup_failed");
     }
     const me = await meResp.json();
+    // Populate immediately on connect, rather than leaving it null until
+    // the next scheduled sync (up to 6h away).
+    const followersCount: number | null = me.followers_count !== undefined ? Number(me.followers_count) : null;
 
     const admin = supabaseAdmin();
     const tokenExpiresAt = new Date(Date.now() + longTokenJson.expires_in * 1000).toISOString();
@@ -90,6 +93,7 @@ Deno.serve(async (req) => {
         user_id: userId,
         platform: "instagram",
         external_account_label: me.username ?? null,
+        follower_count: followersCount,
         connected_at: new Date().toISOString(),
         last_synced_at: null,
         last_sync_error: null,
