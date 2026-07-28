@@ -76,7 +76,7 @@ function groupByDate(entries: PerformanceEntry[]): { date: string; items: Perfor
 
 export function PerformanceTrackingPage() {
   const { user } = useAuth();
-  const { entries, addEntry, removeEntry, setTrialReelTag, error: entriesError } = usePerformanceEntries(user?.id);
+  const { entries, addEntry, removeEntry, setTrialReelTag, setContentFormat, error: entriesError } = usePerformanceEntries(user?.id);
   const { statuses, error: connectionStatusError } = useConnectionStatus(user?.id);
 
   const [connectMessage, setConnectMessage] = useState<string | null>(null);
@@ -415,6 +415,7 @@ export function PerformanceTrackingPage() {
                             {type ? ` · ${type.icon} ${type.label}` : ""}
                             {e.content_format && (
                               <span
+                                title={e.content_format_manual ? "Confirmed by you" : "Best-effort guess - correct it below if it's wrong"}
                                 style={{
                                   fontSize: 9,
                                   fontWeight: 700,
@@ -425,6 +426,7 @@ export function PerformanceTrackingPage() {
                                 }}
                               >
                                 {CONTENT_FORMAT_LABEL[e.content_format]}
+                                {e.content_format_manual ? " ✓" : ""}
                               </span>
                             )}
                             {e.source !== "manual" && (
@@ -489,6 +491,24 @@ export function PerformanceTrackingPage() {
                               }}
                             >
                               {e.is_trial_reel ? "Unmark Trial Reel" : "Mark as Trial Reel"}
+                            </button>
+                          )}
+                          {e.platform === "youtube" && (e.content_format === "short" || e.content_format === "video") && (
+                            <button
+                              onClick={() => setContentFormat(e.id, e.content_format === "short" ? "video" : "short")}
+                              title="Short/Video is a best-effort guess (YouTube has no official flag) - correct it if it's wrong"
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "var(--muted-2)",
+                                cursor: "pointer",
+                                fontSize: 11,
+                                padding: 0,
+                                marginTop: 4,
+                                textDecoration: "underline",
+                              }}
+                            >
+                              This is actually a {e.content_format === "short" ? "regular video" : "Short"}
                             </button>
                           )}
                         </div>

@@ -256,6 +256,19 @@ async function syncYoutubeChannel(
   const upsertErrors: string[] = [];
   const subscriberDeltas = hasAnalyticsScope ? await fetchVideoSubscriberDeltas(videoIds, headers, upsertErrors) : new Map<string, number>();
 
+  // A user's manual Short/Video correction (see setContentFormat in the
+  // frontend) must survive the next sync, not get silently overwritten by a
+  // fresh guess. One query up front rather than a per-video lookup.
+  const { data: manualRows } = await admin
+    .from("performance_entries")
+    .select("external_post_id, content_format")
+    .eq("user_id", userId)
+    .eq("platform", "youtube")
+    .eq("content_format_manual", true);
+  const manualFormatOverrides = new Map<string, "reel" | "feed" | "story" | "short" | "video" | null>(
+    (manualRows ?? []).map((r: any) => [r.external_post_id, r.content_format])
+  );
+
   for (const idBatch of chunk(videoIds, YT_PAGE_SIZE)) {
     const statsResp = await fetch(
       `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet,contentDetails,fileDetails&id=${idBatch.join(",")}`,
@@ -266,8 +279,14 @@ async function syncYoutubeChannel(
 
     for (const video of statsJson.items ?? []) {
       const stats = video.statistics ?? {};
-      const { format: contentFormat, hadAspectRatioData } = classifyYoutubeFormat(video);
-      if (hadAspectRatioData) videosWithAspectRatioData++;
+      let contentFormat: "reel" | "feed" | "story" | "short" | "video" | null;
+      if (manualFormatOverrides.has(video.id)) {
+        contentFormat = manualFormatOverrides.get(video.id)!; // re-writing the same value is a harmless no-op
+      } else {
+        const classified = classifyYoutubeFormat(video);
+        contentFormat = classified.format;
+        if (classified.hadAspectRatioData) videosWithAspectRatioData++;
+      }
       const { error } = await admin.from("performance_entries").upsert(
         {
           user_id: userId,

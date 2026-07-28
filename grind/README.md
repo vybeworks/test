@@ -220,6 +220,28 @@ to the old duration-only guess for that one video only. Redeploy `sync-performan
 re-trigger a sync (the upsert is idempotent, so this re-evaluates every existing row's badge, not
 just new ones) - no new migration needed for this specific fix, `content_format` already exists.
 
+**Second correction, from a real re-test**: the aspect-ratio fix barely moved a real channel's
+numbers (172 → 173 "Short"), which means `fileDetails.videoStreams` isn't actually coming back
+from the API for nearly any of that channel's videos, despite being documented as owner-available
+- likely a data-retention gap for older uploads that the docs don't spell out. Since there's no
+reliable automatic signal left to try here (same category of platform gap as Trial Reels), this
+now has a manual correction as the real fallback, matching the same philosophy used everywhere
+else in this table: **run `0013_content_format_manual.sql`** (adds
+`performance_entries.content_format_manual`), no redeploy needed for the migration itself, but
+redeploy `sync-performance` too since it changed to respect the flag:
+
+```
+supabase functions deploy sync-performance --no-verify-jwt
+```
+
+Every YouTube entry with a Short/Video badge now has a small "This is actually a regular
+video"/"This is actually a Short" link beneath it - correcting it once sets
+`content_format_manual = true`, and every future sync preserves that value instead of
+overwriting it with a fresh (possibly still-wrong) guess. A ✓ on the badge itself means it's been
+confirmed by you rather than guessed. The automatic guess (duration + aspect ratio when
+available) stays as the default for anything you haven't corrected - this is a safety net layered
+on top of the best automation available, not a replacement for trying to automate it.
+
 ## Setting up the launch email
 
 A separate, manually-triggered piece: sends the "GRIND is live" email once, on demand, to
@@ -398,11 +420,18 @@ any client code.
   separate from `content_type` - the latter is the user's own manual content-rhythm
   categorization (reel/photo/song/etc, used for streak tracking), the former is a platform-native
   post-format badge (Reel/Post, Short/Video) detected from the sync itself. Instagram's is exact
-  (`media_product_type`); YouTube's is a heuristic, since the Data API has no official Shorts
-  flag - aspect ratio (`fileDetails.videoStreams`, vertical vs. horizontal) is the primary signal,
-  duration (`contentDetails.duration` ≤ 3 minutes) only a tiebreaker when aspect ratio isn't
-  available. See "Reel/Short vs. regular post/video badge" above for why duration alone wasn't
-  good enough on its own (it mislabeled the large majority of one real channel's regular videos).
+  (`media_product_type`); YouTube's is a best-effort guess, since the Data API has no official
+  Shorts flag - aspect ratio (`fileDetails.videoStreams`) first, duration
+  (`contentDetails.duration` ≤ 3 minutes) as a tiebreaker. In practice `fileDetails` turned out to
+  be unavailable for nearly this whole real channel's catalog, so the guess is often just
+  duration alone - not reliable enough to be the last word. `content_format_manual` (migration
+  `0013_content_format_manual.sql`) is the real fallback: a per-entry correction the user makes
+  once, that sync-performance then preserves forever (it fetches every manually-overridden
+  video's id before its upsert loop and re-writes the saved value instead of a fresh guess,
+  never touching the `content_format_manual` flag itself). Same philosophy as Trial Reel tagging
+  - automate first, but when a platform genuinely doesn't expose the truth, let the user correct
+  it once rather than show something wrong forever. See "Reel/Short vs. regular post/video badge"
+  above for the two rounds of real-world correction that led here.
 
 ## How OAuth sync is wired
 

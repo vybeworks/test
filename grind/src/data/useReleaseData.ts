@@ -105,6 +105,7 @@ export interface PerformanceEntry {
   is_trial_reel: boolean;
   thumbnail_url: string | null;
   content_format: "reel" | "feed" | "story" | "short" | "video" | null;
+  content_format_manual: boolean;
 }
 
 export function usePerformanceEntries(userId: string | undefined) {
@@ -117,7 +118,7 @@ export function usePerformanceEntries(userId: string | undefined) {
     const { data, error: fetchError } = await supabase
       .from("performance_entries")
       .select(
-        "id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source, is_trial_reel, thumbnail_url, content_format"
+        "id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source, is_trial_reel, thumbnail_url, content_format, content_format_manual"
       )
       .eq("user_id", userId)
       .order("post_date", { ascending: false })
@@ -180,7 +181,21 @@ export function usePerformanceEntries(userId: string | undefined) {
     return error?.message ?? null;
   };
 
-  return { entries, loading, error, addEntry, removeEntry, setTrialReelTag, refresh };
+  /** Manually corrects a YouTube entry's Short/Video badge - duration + aspect ratio is a
+   * best-effort guess (the Data API has no official flag), not always right. Marks the row so
+   * the next sync preserves the correction instead of overwriting it with a fresh guess. */
+  const setContentFormat = async (id: string, format: "short" | "video") => {
+    if (!userId) return null;
+    const { error } = await supabase
+      .from("performance_entries")
+      .update({ content_format: format, content_format_manual: true })
+      .eq("user_id", userId)
+      .eq("id", id);
+    if (!error) await refresh();
+    return error?.message ?? null;
+  };
+
+  return { entries, loading, error, addEntry, removeEntry, setTrialReelTag, setContentFormat, refresh };
 }
 
 /** Lightweight fetch of just the platform column, for the GRIND Score's stats component. */
