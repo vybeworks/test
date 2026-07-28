@@ -94,16 +94,23 @@ function parseIso8601DurationSeconds(duration: string | undefined): number | nul
   return (Number(h ?? 0) * 3600) + (Number(m ?? 0) * 60) + Number(s ?? 0);
 }
 
-function classifyYoutubeFormat(video: any): "short" | "video" | null {
+// `hadAspectRatioData` is a diagnostic, not just an implementation detail -
+// the only way to tell, from the sync response, whether fileDetails is
+// actually coming back from the API for this channel's videos at all,
+// rather than silently falling back to the duration-only guess for
+// everything and looking identical to the old, worse heuristic.
+function classifyYoutubeFormat(video: any): { format: "short" | "video" | null; hadAspectRatioData: boolean } {
   const durationSeconds = parseIso8601DurationSeconds(video.contentDetails?.duration);
-  if (durationSeconds === null) return null;
-  if (durationSeconds > SHORTS_MAX_SECONDS) return "video"; // too long to be a Short regardless of shape
+  if (durationSeconds === null) return { format: null, hadAspectRatioData: false };
+  if (durationSeconds > SHORTS_MAX_SECONDS) {
+    return { format: "video", hadAspectRatioData: false }; // too long to be a Short regardless of shape
+  }
 
   const stream = video.fileDetails?.videoStreams?.[0];
   if (stream?.heightPixels && stream?.widthPixels) {
-    return stream.heightPixels > stream.widthPixels ? "short" : "video";
+    return { format: stream.heightPixels > stream.widthPixels ? "short" : "video", hadAspectRatioData: true };
   }
-  return "short"; // no aspect-ratio data available - fall back to the duration-only heuristic
+  return { format: "short", hadAspectRatioData: false }; // no aspect-ratio data available - fall back to duration
 }
 
 // --- YouTube ---
@@ -128,6 +135,7 @@ interface YoutubeSyncResult {
   truncated: boolean;
   analyticsScopeGranted: boolean;
   videosWithSubscriberData: number;
+  videosWithAspectRatioData: number;
 }
 
 async function fetchAllUploadVideoIds(
@@ -239,10 +247,12 @@ async function syncYoutubeChannel(
       truncated,
       analyticsScopeGranted: hasAnalyticsScope,
       videosWithSubscriberData: 0,
+      videosWithAspectRatioData: 0,
     };
   }
 
   let synced = 0;
+  let videosWithAspectRatioData = 0;
   const upsertErrors: string[] = [];
   const subscriberDeltas = hasAnalyticsScope ? await fetchVideoSubscriberDeltas(videoIds, headers, upsertErrors) : new Map<string, number>();
 
@@ -256,7 +266,8 @@ async function syncYoutubeChannel(
 
     for (const video of statsJson.items ?? []) {
       const stats = video.statistics ?? {};
-      const contentFormat = classifyYoutubeFormat(video);
+      const { format: contentFormat, hadAspectRatioData } = classifyYoutubeFormat(video);
+      if (hadAspectRatioData) videosWithAspectRatioData++;
       const { error } = await admin.from("performance_entries").upsert(
         {
           user_id: userId,
@@ -293,6 +304,7 @@ async function syncYoutubeChannel(
     truncated,
     analyticsScopeGranted: hasAnalyticsScope,
     videosWithSubscriberData: subscriberDeltas.size,
+    videosWithAspectRatioData,
   };
 }
 
