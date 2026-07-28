@@ -202,6 +202,12 @@ export function PerformanceTrackingPage() {
               ) : (
                 <div style={{ fontSize: 11, color: "var(--muted-2)" }}>Not connected — pulls views/likes/comments automatically</div>
               )}
+              {key === "instagram" && statuses[key] && statuses[key]!.instagram_backfill_complete === false && (
+                <div style={{ fontSize: 11, color: "var(--teal)", marginTop: 2 }}>
+                  Still catching up on your full history - Instagram's rate limit means this happens gradually across
+                  syncs, not all at once. New posts and recent stats are already up to date in the meantime.
+                </div>
+              )}
               {key === "youtube" && statuses[key] && !statuses[key]!.has_analytics_scope && (
                 <button
                   onClick={() => handleConnect(connect)}

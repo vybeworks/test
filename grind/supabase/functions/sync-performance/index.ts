@@ -333,6 +333,16 @@ async function syncYoutubeChannel(
 // call per post on top of the media-list pages. INSTAGRAM_MAX_MEDIA=100
 // keeps a single run comfortably under that ceiling even with room for other
 // activity in the same hour - not a design goal, a rate-limit necessity.
+// Unlike YouTube (small enough history to pull in one run, always), a large
+// Instagram account's full history genuinely can't fit under this ceiling in
+// one run - so this makes the sync resumable: each run either continues a
+// one-time backfill from where the last run left off (persisted cursor on
+// platform_connections), or, once the backfill has reached the real end of
+// the account's history, switches to steady-state mode - just the newest
+// page, to catch new posts and refresh recent stats. Older posts' reach
+// numbers are effectively frozen after Instagram's own measurement window
+// closes, so re-walking the entire history forever after the initial
+// backfill would just burn rate-limit budget for no new information.
 const INSTAGRAM_PAGE_SIZE = 50;
 const INSTAGRAM_MAX_MEDIA = 100;
 
@@ -342,24 +352,52 @@ interface InstagramSyncResult {
   mediaFound: number;
   synced: number;
   upsertErrors: string[];
-  truncated: boolean;
+  backfillComplete: boolean;
 }
 
-async function fetchInstagramMedia(accessToken: string): Promise<{ items: any[]; truncated: boolean }> {
+async function fetchInstagramMediaPage(
+  accessToken: string,
+  afterCursor: string | null
+): Promise<{ items: any[]; nextCursor: string | null; reachedEnd: boolean }> {
   const items: any[] = [];
-  let nextUrl: string | null =
-    `https://graph.instagram.com/me/media?fields=id,caption,media_type,media_product_type,timestamp,like_count,comments_count,media_url,thumbnail_url&limit=${INSTAGRAM_PAGE_SIZE}&access_token=${accessToken}`;
+  let cursor = afterCursor;
+  let reachedEnd = false;
 
-  while (nextUrl && items.length < INSTAGRAM_MAX_MEDIA) {
-    const resp = await fetch(nextUrl);
+  while (items.length < INSTAGRAM_MAX_MEDIA) {
+    const url = new URL("https://graph.instagram.com/me/media");
+    url.searchParams.set(
+      "fields",
+      "id,caption,media_type,media_product_type,timestamp,like_count,comments_count,media_url,thumbnail_url"
+    );
+    url.searchParams.set("limit", String(INSTAGRAM_PAGE_SIZE));
+    url.searchParams.set("access_token", accessToken);
+    if (cursor) url.searchParams.set("after", cursor);
+
+    const resp = await fetch(url.toString());
     if (!resp.ok) throw new Error(`media list failed: ${await resp.text()}`);
     const json = await resp.json();
     items.push(...(json.data ?? []));
-    nextUrl = json.paging?.next ?? null;
+
+    if (!json.paging?.next) {
+      reachedEnd = true;
+      cursor = null;
+      break;
+    }
+    // Extracted rather than storing the raw `next` URL, so a resumed cursor
+    // stays valid even after the access token is later rotated (the raw URL
+    // bakes in whatever token was current at generation time).
+    const afterFromPaging: string | undefined = json.paging?.cursors?.after;
+    if (!afterFromPaging) {
+      // Meta's docs promise `cursors.after` alongside `next` - if that's ever
+      // not true, there's no safe way to resume, so stop rather than risk a
+      // stuck or invalid cursor being persisted.
+      reachedEnd = true;
+      break;
+    }
+    cursor = afterFromPaging;
   }
 
-  const truncated = items.length > INSTAGRAM_MAX_MEDIA || Boolean(nextUrl);
-  return { items: items.slice(0, INSTAGRAM_MAX_MEDIA), truncated };
+  return { items: items.slice(0, INSTAGRAM_MAX_MEDIA), nextCursor: reachedEnd ? null : cursor, reachedEnd };
 }
 
 // Best-effort: Instagram's insights metric names have shifted across API
@@ -382,9 +420,34 @@ async function syncInstagramAccount(admin: AdminClient, userId: string, accessTo
   const me = await meResp.json();
   const followersCount: number | null = me.followers_count !== undefined ? Number(me.followers_count) : null;
 
-  const { items, truncated } = await fetchInstagramMedia(accessToken);
+  const { data: connRow } = await admin
+    .from("platform_connections")
+    .select("instagram_backfill_cursor, instagram_backfill_complete")
+    .eq("user_id", userId)
+    .eq("platform", "instagram")
+    .maybeSingle();
+  const alreadyBackfilled = connRow?.instagram_backfill_complete ?? false;
+  // Once the one-time backfill has reached the real end of history, always
+  // start from the newest page (cursor null) - that's steady-state mode.
+  // Until then, resume from wherever the last run's cursor left off.
+  const startCursor = alreadyBackfilled ? null : connRow?.instagram_backfill_cursor ?? null;
+
+  const { items, nextCursor, reachedEnd } = await fetchInstagramMediaPage(accessToken, startCursor);
+  const backfillComplete = alreadyBackfilled || reachedEnd;
+
+  if (!alreadyBackfilled) {
+    await admin
+      .from("platform_connections")
+      .update({
+        instagram_backfill_cursor: reachedEnd ? null : nextCursor,
+        instagram_backfill_complete: reachedEnd,
+      })
+      .eq("user_id", userId)
+      .eq("platform", "instagram");
+  }
+
   if (items.length === 0) {
-    return { username: me.username ?? null, followersCount, mediaFound: 0, synced: 0, upsertErrors: [], truncated };
+    return { username: me.username ?? null, followersCount, mediaFound: 0, synced: 0, upsertErrors: [], backfillComplete };
   }
 
   let synced = 0;
@@ -430,7 +493,7 @@ async function syncInstagramAccount(admin: AdminClient, userId: string, accessTo
     }
   }
 
-  return { username: me.username ?? null, followersCount, mediaFound: items.length, synced, upsertErrors, truncated };
+  return { username: me.username ?? null, followersCount, mediaFound: items.length, synced, upsertErrors, backfillComplete };
 }
 
 Deno.serve(async (req) => {
@@ -456,6 +519,7 @@ Deno.serve(async (req) => {
     try {
       let result: YoutubeSyncResult | InstagramSyncResult;
       let followerCount: number | null;
+      let instagramBackfillComplete: boolean | null = null;
       if (conn.platform === "youtube") {
         const accessToken = await ensureFreshYoutubeToken(admin, conn);
         const hasAnalyticsScope = Boolean(conn.granted_scopes?.includes("yt-analytics.readonly"));
@@ -465,6 +529,7 @@ Deno.serve(async (req) => {
         const accessToken = await ensureFreshInstagramToken(admin, conn);
         result = await syncInstagramAccount(admin, conn.user_id, accessToken);
         followerCount = result.followersCount;
+        instagramBackfillComplete = result.backfillComplete;
       } else {
         continue;
       }
@@ -476,6 +541,7 @@ Deno.serve(async (req) => {
           follower_count: followerCount,
           last_synced_at: new Date().toISOString(),
           last_sync_error: null,
+          ...(conn.platform === "instagram" ? { instagram_backfill_complete: instagramBackfillComplete } : {}),
         },
         { onConflict: "user_id,platform" }
       );

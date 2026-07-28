@@ -242,6 +242,24 @@ confirmed by you rather than guessed. The automatic guess (duration + aspect rat
 available) stays as the default for anything you haven't corrected - this is a safety net layered
 on top of the best automation available, not a replacement for trying to automate it.
 
+**Instagram's full history, not just the newest 100**: run `0014_instagram_backfill.sql` (adds
+`instagram_backfill_cursor`/`instagram_backfill_complete` to `platform_connections`, and
+`instagram_backfill_complete` to `platform_connection_status`), then redeploy `sync-performance`:
+
+```
+supabase functions deploy sync-performance --no-verify-jwt
+```
+
+This is a real difference from YouTube, not just a bigger number: YouTube's whole history fits
+under its quota in one sync, always. Instagram's 200-calls/hour ceiling means a history beyond
+~100 posts genuinely cannot be pulled in a single run - so this makes the sync resumable instead.
+Each 6-hour run picks up from a saved cursor and walks further into the account's history; once
+it reaches the real end, it flips to steady-state (newest page only, to catch new posts and keep
+recent stats fresh) and stops re-walking old ground. **A large account's full backfill will take
+several sync cycles to complete**, not one - that's the honest tradeoff of a real per-hour rate
+limit, not a bug. The Track tab shows "still catching up on your full history" under Instagram's
+connection status for as long as that's true, so it's never silently incomplete-looking-done.
+
 ## Setting up the launch email
 
 A separate, manually-triggered piece: sends the "GRIND is live" email once, on demand, to
@@ -489,6 +507,20 @@ Supabase Edge Functions (`supabase/functions/`) - the first server-side code in 
   a style choice like YouTube's 2,000 cap: Instagram's rate limit is 200 calls/hour per account,
   and fetching reach costs one call per post on top of the media-list pages, so a run has to stay
   well under that ceiling.
+- **Instagram's full history is now pulled too, just not in one run.** YouTube's entire history
+  fits comfortably under its quota in a single sync (confirmed against a real 174-video channel);
+  Instagram genuinely can't do the same under a 200-calls/hour ceiling once an account has more
+  than ~100 posts. `platform_connections.instagram_backfill_cursor`/`instagram_backfill_complete`
+  (migration `0014_instagram_backfill.sql`) make the sync resumable: each 6-hour run either
+  continues a one-time backfill from an Instagram-provided pagination cursor (extracted from
+  `paging.cursors.after` rather than storing the raw `next` URL, so a resumed cursor survives the
+  access token being rotated in between), or, once that backfill has reached the real end of the
+  account's history, switches to steady-state mode - just the newest page, to catch new posts and
+  refresh recent stats. Older posts' reach numbers are effectively frozen after Instagram's own
+  measurement window closes, so re-walking the whole history forever after backfill would just
+  burn rate-limit budget for no new information. `platform_connection_status
+  .instagram_backfill_complete` mirrors the flag to the client so the Track tab can say "still
+  catching up on your full history" instead of quietly looking done while it's still in progress.
 - **Views/reach fetching is deliberately best-effort per post** - Instagram's insights metric
   names have shifted across API versions and differ by media type, so one post's insights call
   failing doesn't fail the sync; it leaves that post's views at 0 with the specific error surfaced
