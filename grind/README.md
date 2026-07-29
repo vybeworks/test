@@ -260,6 +260,28 @@ several sync cycles to complete**, not one - that's the honest tradeoff of a rea
 limit, not a bug. The Track tab shows "still catching up on your full history" under Instagram's
 connection status for as long as that's true, so it's never silently incomplete-looking-done.
 
+## Setting up the Insight Engine (step 5)
+
+Entirely frontend + one schema addition - no new Edge Function, no new secrets, no redeploy of
+`sync-performance` beyond picking up the `views_unavailable` fix below.
+
+**1. Run `0015_views_unavailable.sql`** (adds `performance_entries.views_unavailable`), then
+redeploy `sync-performance` so it starts populating the flag:
+
+```
+supabase functions deploy sync-performance --no-verify-jwt
+```
+
+This one's foundational, not cosmetic: Instagram's reach-insights call is best-effort and silently
+writes `views: 0` on failure (by design, so one bad post doesn't fail the whole sync) - without
+this flag, a real 0-view post and a failed API call look identical, and every average the Insight
+Engine computes would quietly include fake zeros. `views_unavailable` lets every insight function
+exclude those rows from view-based math instead of averaging them in. Existing rows backfill this
+as `false` (the column default) until the next sync re-evaluates them.
+
+**2. Nothing else to deploy** - `src/lib/insights.ts`, `src/pages/InsightEnginePage.tsx`, and the
+new "Insights" nav tab are pure frontend, live the moment you build/deploy the app itself.
+
 ## Setting up the launch email
 
 A separate, manually-triggered piece: sends the "GRIND is live" email once, on demand, to
@@ -450,6 +472,42 @@ any client code.
   - automate first, but when a platform genuinely doesn't expose the truth, let the user correct
   it once rather than show something wrong forever. See "Reel/Short vs. regular post/video badge"
   above for the two rounds of real-world correction that led here.
+
+## How the Insight Engine is wired (step 5)
+
+- **Computed entirely client-side, deliberately** - `src/lib/insights.ts` is pure functions
+  (`getFormatPerformance`, `getDayPerformance`/`getBestDay`, `getMonthlyTrend`,
+  `getTrendComparison`) operating on the same `entries` array `PerformanceTrackingPage` already
+  fetches via `usePerformanceEntries`. A few hundred rows is trivial to aggregate in the browser -
+  no new Edge Function, no new table, no scheduled job. If this ever needs to run without a client
+  present (a future digest email, say), the same pure functions could move server-side unchanged.
+- **`MIN_SAMPLE_SIZE = 3` gates every ranked insight.** A format, weekday, or trend window with
+  fewer than 3 usable data points doesn't get ranked or claimed as a pattern - the UI says so
+  explicitly ("not enough data yet (1/3 posts)") instead of presenting one lucky post as a trend.
+  This is the same honesty principle as `truncated`/`upsertErrors` elsewhere in this app, applied
+  to statistics instead of sync status.
+- **`views_unavailable` (migration `0015_views_unavailable.sql`) is why the numbers can be trusted
+  at all.** Instagram's reach-insights call fails into `views: 0` by design (best-effort, doesn't
+  fail the whole sync); YouTube's `viewCount` can theoretically be withheld for a video. Either
+  case would silently corrupt every average without this flag - `withUsableViews()` in
+  `insights.ts` filters them out of every view-based computation, while likes/comments (which come
+  from the same reliable batched call as everything else, no separate failure-prone request) stay
+  included regardless.
+- **Comparisons never cross platforms.** Best format/day/trend are computed per-platform and
+  ranked within that platform only - an Instagram Reel and a YouTube Short aren't comparable given
+  completely different follower bases, so the UI has a platform selector rather than one merged
+  ranking.
+- **`content_format` drives "best format," not `content_type`.** They're different taxonomies that
+  happen to share some vocabulary: `content_type` is the user's manual content-rhythm tag
+  (reel/photo/song/etc, used for streak tracking) and is null for nearly all synced data;
+  `content_format` is the auto-detected post format from the sync itself (see step 4's Reel/Short
+  badge work) and is what's actually populated across real history. `CONTENT_FORMAT_LABEL` moved
+  from `PerformanceTrackingPage.tsx` to the shared `releaseToolkit.ts` so both pages use the same
+  labels without duplicating them.
+- **YouTube gets a subscriber-attribution insight Instagram can't** - `avgFollowsGained` per format
+  is real, thanks to the per-video Analytics API work from step 4. Instagram's `follows_gained` is
+  always 0 (no platform API attributes follows to a specific post, a confirmed limitation, not a
+  bug), so that stat is simply omitted on Instagram's cards rather than shown as a fake 0.
 
 ## How OAuth sync is wired
 

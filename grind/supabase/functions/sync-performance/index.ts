@@ -279,6 +279,10 @@ async function syncYoutubeChannel(
 
     for (const video of statsJson.items ?? []) {
       const stats = video.statistics ?? {};
+      // Real 0 views and "YouTube withheld statistics for this video" both
+      // arrive as viewCount being absent - distinguish them so the Insight
+      // Engine doesn't average a withheld video in as a real zero-view post.
+      const viewsUnavailable = stats.viewCount === undefined;
       let contentFormat: "reel" | "feed" | "story" | "short" | "video" | null;
       if (manualFormatOverrides.has(video.id)) {
         contentFormat = manualFormatOverrides.get(video.id)!; // re-writing the same value is a harmless no-op
@@ -302,6 +306,7 @@ async function syncYoutubeChannel(
           source: "youtube_api",
           thumbnail_url: video.snippet?.thumbnails?.medium?.url ?? video.snippet?.thumbnails?.default?.url ?? null,
           content_format: contentFormat,
+          views_unavailable: viewsUnavailable,
         },
         { onConflict: "user_id,platform,external_post_id" }
       );
@@ -456,6 +461,10 @@ async function syncInstagramAccount(admin: AdminClient, userId: string, accessTo
   for (const media of items) {
     const { views, error: reachError } = await fetchMediaReach(media.id, accessToken);
     if (reachError) upsertErrors.push(`${media.id} (reach): ${reachError}`);
+    // `views === null` covers both a failed HTTP call and a successful one
+    // that didn't return a numeric value - either way, real reach wasn't
+    // obtained, so the Insight Engine shouldn't treat it as a genuine zero.
+    const viewsUnavailable = views === null;
 
     // `media_url` is a raw video file for VIDEO/reels, not something an <img>
     // tag can render - `thumbnail_url` is the actual cover image for those.
@@ -483,6 +492,7 @@ async function syncInstagramAccount(admin: AdminClient, userId: string, accessTo
         source: "instagram_api",
         thumbnail_url: thumbnailUrl,
         content_format: contentFormat,
+        views_unavailable: viewsUnavailable,
       },
       { onConflict: "user_id,platform,external_post_id" }
     );

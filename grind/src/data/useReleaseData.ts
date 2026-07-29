@@ -106,6 +106,7 @@ export interface PerformanceEntry {
   thumbnail_url: string | null;
   content_format: "reel" | "feed" | "story" | "short" | "video" | null;
   content_format_manual: boolean;
+  views_unavailable: boolean;
 }
 
 export function usePerformanceEntries(userId: string | undefined) {
@@ -118,7 +119,7 @@ export function usePerformanceEntries(userId: string | undefined) {
     const { data, error: fetchError } = await supabase
       .from("performance_entries")
       .select(
-        "id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source, is_trial_reel, thumbnail_url, content_format, content_format_manual"
+        "id, platform, post_date, content_type, views, likes, comments, follows_gained, note, source, is_trial_reel, thumbnail_url, content_format, content_format_manual, views_unavailable"
       )
       .eq("user_id", userId)
       .order("post_date", { ascending: false })

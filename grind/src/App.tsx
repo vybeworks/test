@@ -4,14 +4,16 @@ import { AuthScreen } from "./auth/AuthScreen";
 import { HomePage } from "./pages/HomePage";
 import { RhythmPage } from "./pages/RhythmPage";
 import { PerformanceTrackingPage } from "./pages/PerformanceTrackingPage";
+import { InsightEnginePage } from "./pages/InsightEnginePage";
 import { ReleaseToolkitPage } from "./pages/ReleaseToolkitPage";
 
-type Screen = "home" | "rhythm" | "track" | "releases";
+type Screen = "home" | "rhythm" | "track" | "insights" | "releases";
 
 const TABS: { key: Screen; label: string }[] = [
   { key: "home", label: "Home" },
   { key: "rhythm", label: "Rhythm" },
   { key: "track", label: "Track" },
+  { key: "insights", label: "Insights" },
   { key: "releases", label: "Releases" },
 ];
 
@@ -24,6 +26,7 @@ function AppShell() {
       {screen === "home" && <HomePage />}
       {screen === "rhythm" && <RhythmPage />}
       {screen === "track" && <PerformanceTrackingPage />}
+      {screen === "insights" && <InsightEnginePage />}
       {screen === "releases" && <ReleaseToolkitPage />}
 
       <div

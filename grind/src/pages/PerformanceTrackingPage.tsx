@@ -3,7 +3,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { usePerformanceEntries, type PerformanceEntry } from "../data/useReleaseData";
 import { connectInstagram, connectYoutube, useConnectionStatus } from "../data/useConnections";
 import { PerformanceTrendChart } from "../components/PerformanceTrendChart";
-import { PLATFORM_META, type Platform } from "../lib/releaseToolkit";
+import { CONTENT_FORMAT_LABEL, PLATFORM_META, type Platform } from "../lib/releaseToolkit";
 import { CONTENT_TYPES } from "../lib/rhythm";
 
 function timeAgo(iso: string | null): string {
@@ -41,14 +41,6 @@ function formatFollowsDelta(n: number): string {
 function followUnitLabel(platform: Platform): string {
   return platform === "youtube" ? "subs" : "follows";
 }
-
-const CONTENT_FORMAT_LABEL: Record<NonNullable<PerformanceEntry["content_format"]>, string> = {
-  reel: "REEL",
-  feed: "POST",
-  story: "STORY",
-  short: "SHORT",
-  video: "VIDEO",
-};
 
 function formatDateHeader(dateStr: string): string {
   const today = todayStr();

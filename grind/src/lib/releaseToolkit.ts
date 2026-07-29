@@ -15,6 +15,15 @@ export const PLATFORM_META: Record<Platform, { label: string; color: string }> =
   tiktok: { label: "TikTok", color: "#199e70" },
 };
 
+/** Auto-detected post format (distinct from the user's manual content_type - see performance_entries). */
+export const CONTENT_FORMAT_LABEL: Record<"reel" | "feed" | "story" | "short" | "video", string> = {
+  reel: "REEL",
+  feed: "POST",
+  story: "STORY",
+  short: "SHORT",
+  video: "VIDEO",
+};
+
 export const ROLLOUT_TEMPLATE: { week: string; title: string; description: string }[] = [
   {
     week: "6 weeks out",
