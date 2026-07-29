@@ -83,6 +83,19 @@ up the scheduled job that calls `sync-performance` every 6 hours via `pg_cron`/`
 `create extension` lines fail with a permissions error, enable both under Database → Extensions
 in the dashboard first, then re-run just the `cron.schedule(...)` statement at the bottom by hand.
 
+**Follow-up fix, run this too**: `0017_cron_timeout.sql`. The original `net.http_post` call above
+never set `timeout_milliseconds`, so it silently used pg_net's default of 5 seconds - far shorter
+than `sync-performance` actually takes once a real history is synced (individual upserts per
+video/post, plus a sequential reach-insights call per Instagram post). This shows up as a
+`net._http_response` row with `status_code: null` and a "Timeout of 5000 ms reached" error on
+every single run. **It's not data loss** - confirmed that pg_net's timeout only controls how long
+*it* waits for a response, it does not cancel the destination request, so `sync-performance` keeps
+running and completing regardless. Still worth fixing so `net._http_response` stays useful for
+spotting an actual failure instead of drowning in expected noise - `0017` bumps
+`timeout_milliseconds` to 120000 (2 minutes) on the same job. `cron.schedule()` with the existing
+job name (`sync-performance-every-6h`) upserts in place, so this is safe to run without unscheduling
+anything first.
+
 **5. Test it**: open the app, go to the Track tab, click Connect next to YouTube, and go through
 Google's consent screen. You should land back on the Track tab with "YouTube connected." and see
 your channel name once the first sync runs (immediately, or trigger one early by calling
