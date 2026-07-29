@@ -376,6 +376,67 @@ so do this *after* the Vault secret exists and the function is deployed, not bef
 insert into public.waitlist_signups (email) values ('you+test@joingrindapp.com');
 ```
 
+## Setting up the password/email-changed security notifications
+
+Not triggered by anything in this repo - these fire off `auth.users` itself, so they cover
+account changes made anywhere against this Supabase project, including the separate waitlist
+website's account-settings page (a different codebase this repo has no access to). Same Resend
+setup, two more narrow-purpose secrets.
+
+**1. Set both secrets** (separate from every other credential here, same reasoning as always - a
+leak of one can't be used to trigger the others):
+
+```
+supabase secrets set PASSWORD_CHANGED_EMAIL_SECRET=$(openssl rand -hex 32)
+supabase secrets set EMAIL_CHANGED_EMAIL_SECRET=$(openssl rand -hex 32)
+```
+
+**2. Store both in Vault**, by hand, in the SQL editor:
+
+```sql
+select vault.create_secret('<the exact PASSWORD_CHANGED_EMAIL_SECRET value>', 'password_changed_email_secret');
+select vault.create_secret('<the exact EMAIL_CHANGED_EMAIL_SECRET value>', 'email_changed_email_secret');
+```
+
+**3. Deploy both functions** (public endpoints by design, same as every other `pg_net`-triggered
+function here):
+
+```
+supabase functions deploy send-password-changed-email --no-verify-jwt
+supabase functions deploy send-email-changed-email --no-verify-jwt
+```
+
+**4. Run `0016_auth_security_notifications.sql`** in the SQL editor - after both Vault secrets
+exist and both functions are deployed, not before, same ordering reason as the welcome email.
+
+**5. Test it**: change a test account's password or email through Supabase Auth (the dashboard's
+user editor works, or `supabase.auth.updateUser(...)` from any client using this project) and
+confirm the email arrives. For the email-change test specifically, remember it goes to the *old*
+address, not the new one.
+
+**Two things worth understanding, not just copying commands for:**
+
+- **These triggers run synchronously inside Supabase's own auth request** - unlike the welcome
+  email (which fires off an insert nobody else depends on), a password or email change is a live
+  user-facing action. Both trigger functions wrap their `net.http_post` call in
+  `exception when others then return new` specifically so a notification failure (missing Vault
+  secret, `pg_net` hiccup, whatever) can never block the user's actual password/email change - a
+  missed notification is an acceptable failure mode, a blocked account change is not.
+- **`when (...)` lives on the trigger, not as an `if` inside the function body.** `auth.users` gets
+  updated on nearly every authenticated request (`last_sign_in_at` and session fields change on
+  every login), so gating at the trigger level means Postgres skips invoking the function entirely
+  for all the unrelated updates, instead of paying a function-call cost on the login hot path for
+  every request just to check "did the password change? no." - `old.encrypted_password is distinct
+  from new.encrypted_password` for the password trigger, `old.email is distinct from new.email`
+  for the email one (which only reflects the new value once a change is actually confirmed under
+  Supabase's default double opt-in flow, so this correctly fires once per completed change, not
+  once per change request).
+- **Deliberately not using the existing `email_sends` table.** That table's primary key is
+  `(recipient_email, campaign)` - it's built for "send this once per person, ever" (the welcome
+  email), and reusing it here would silently cap a user to one password-changed notification for
+  their entire account lifetime. These are recurring security events, not one-time campaigns, so
+  neither function checks or logs against it.
+
 ## Deploying
 
 Static hosting (Vercel recommended): point it at this directory, build command `npm run build`,
@@ -645,3 +706,36 @@ manually triggered, no schedule).
 - **Reuses `_shared/resend.ts` and `MAIL_FROM_ADDRESS`** from the launch email - exactly the
   "generic sending helper, launch-specific logic separate" split that address-reuse comment
   predicted would pay off.
+
+## How the password/email-changed security notifications are wired
+
+- **`auth.users` itself is the trigger source, not an app table** - these need to fire regardless
+  of which frontend changed the password/email, and the separate waitlist website's
+  account-settings page (where this was actually built) isn't code this repo can reach. `auth.users`
+  is the one place both a GRIND-side change and a waitlist-website-side change would both land.
+  `on_auth_user_created` in `0001_profiles.sql` already proved triggers on this table work in this
+  project - `0016_auth_security_notifications.sql` is the same proven mechanism, extended to
+  `after update` with a `when` clause instead of `after insert`.
+- **Gated at the trigger level (`when (old.x is distinct from new.x)`), not inside the function
+  body** - `auth.users` updates on nearly every authenticated request, so this keeps the function
+  from being invoked at all for the vast majority of updates that have nothing to do with a
+  password or email change, rather than paying a function-call cost on the login hot path just to
+  decide there's nothing to do.
+- **`exception when others then return new` is load-bearing, not defensive boilerplate.** Unlike
+  the welcome email (an insert nobody else depends on), these triggers run synchronously inside
+  Supabase's own password-change/email-change API request - if the trigger raised, it would block
+  the user's actual account change. A missed notification is recoverable; a blocked password
+  change is not.
+- **The email-changed notification is sent to `old.email`, not `new.email`** - deliberately, so
+  the account's original inbox is the one that finds out if this wasn't actually the owner. Also
+  why this triggers on `old.email is distinct from new.email` rather than `email_change` being
+  set: under Supabase's default double opt-in flow, `email` doesn't update until the change is
+  actually confirmed, so this correctly fires once per completed change, not once per request.
+- **Two new secrets, two new functions, not one shared one** - `PASSWORD_CHANGED_EMAIL_SECRET` and
+  `EMAIL_CHANGED_EMAIL_SECRET` are separate, same reasoning as `WELCOME_EMAIL_SECRET` vs.
+  `LAUNCH_EMAIL_SECRET`: each credential can only ever trigger the one email it's for.
+- **Deliberately not using `email_sends` for idempotency.** Its primary key,
+  `(recipient_email, campaign)`, encodes "send this once per person, ever" - correct for the
+  welcome email, wrong here. A user can legitimately change their password multiple times over an
+  account's lifetime and should be notified every time, so neither new function checks or writes
+  to that table.
