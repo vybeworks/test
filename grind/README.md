@@ -3,11 +3,12 @@
 Independent-artist planning, tracking, and consistency app. PWA frontend (Vite + React +
 TypeScript) backed by Supabase (Postgres + Auth).
 
-Build status: **Step 4 — Instagram/YouTube OAuth sync (YouTube built, Instagram next).** Accounts
-(step 1), the streak/rhythm habit loop (step 2), manual performance tracking + Release Toolkit
-(step 3), plus: automatic YouTube performance sync via OAuth and a scheduled background job.
-Instagram Graph API sync, the Insight Engine, Growth Recap/Release Archive, and the Collab Board
-are still ahead per the spec's build order.
+Build status: **Step 7 — Collab Board, just landed.** Accounts (step 1), the streak/rhythm habit
+loop (step 2), manual performance tracking + Release Toolkit (step 3), Instagram/YouTube OAuth
+sync with full history backfill (step 4), the Insight Engine (step 5), and now the Collab Board
+(step 7) are all built. Step 6 (Growth Recap/Release Archive) is deliberately deferred, not
+skipped - built out of the spec's original order at the user's explicit call, still next up after
+this.
 
 ## Setup
 
@@ -450,6 +451,56 @@ address, not the new one.
   their entire account lifetime. These are recurring security events, not one-time campaigns, so
   neither function checks or logs against it.
 
+## Setting up the Collab Board (step 7)
+
+No in-app messaging by design (cut early to avoid the moderation burden of a young userbase) -
+users post what they're looking for, browse others' posts, and reach out via opt-in contact info
+shown directly on the post. Reuses the existing Resend setup for the one email this feature sends
+(a report notification); everything else is pure frontend + schema.
+
+**1. Set the report-notification secret:**
+
+```
+supabase secrets set COLLAB_REPORT_EMAIL_SECRET=$(openssl rand -hex 32)
+```
+
+**2. Store it in Vault**, by hand, in the SQL editor:
+
+```sql
+select vault.create_secret('<the exact value you set above>', 'collab_report_email_secret');
+```
+
+**3. Deploy the report function:**
+
+```
+supabase functions deploy send-collab-report-email --no-verify-jwt
+```
+
+**4. Run `0018_collab_board.sql`** in the SQL editor - after the Vault secret exists and the
+function is deployed, same ordering reason as every other trigger-driven email in this project.
+This one also schedules a `pg_cron` job (`collab-posts-auto-close-stale`), no new extension setup
+needed since `pg_cron`/`pg_net` are already enabled from step 4.
+
+**5. Test it**: post something on the Collab Board, then use a second account (or the same one -
+reporting your own post isn't blocked at the DB level, just hidden in the UI) to report it and
+confirm the notification email arrives at `MAIL_FROM_ADDRESS`.
+
+**Worth knowing about the three build-in guardrails**, since none of them are visible from the UI
+alone:
+
+- **A hard cap of 3 open posts per account**, enforced by a trigger (`enforce_open_collab_post_cap`
+  in `0018_collab_board.sql`), not just client-side validation - the exact error message it raises
+  is what the "New post" form surfaces back to the user if they somehow hit it without the UI
+  catching it first (e.g. a second browser tab).
+- **Posts auto-close after 30 days of no activity** (the `collab-posts-auto-close-stale` cron job,
+  daily) - keeps Browse from filling up with dead listings. Adjust the `interval '30 days'` in the
+  migration if that window is wrong for how this board actually gets used.
+- **Reports are a real safety valve, not just a courtesy button.** Contact info here is visible
+  board-wide the moment someone opts in - to everyone using the app, not just whoever they intended
+  to reach - and there's no messaging layer to mediate a bad interaction. `collab_post_reports` is
+  append-only from the client's side (no SELECT policy - same "write-only" pattern as
+  `email_sends`), so reports are durable even if the notification email fails.
+
 ## Deploying
 
 Static hosting (Vercel recommended): point it at this directory, build command `npm run build`,
@@ -752,3 +803,41 @@ manually triggered, no schedule).
   welcome email, wrong here. A user can legitimately change their password multiple times over an
   account's lifetime and should be notified every time, so neither new function checks or writes
   to that table.
+
+## How the Collab Board is wired (step 7)
+
+- **The first RLS shape in this project that isn't strictly owner-scoped.** Every table before
+  this one only ever lets a user read their own rows. `collab_posts`' SELECT policy is
+  `to authenticated using (true)` - any logged-in user can browse every post, regardless of who
+  posted it - because browsing other users' posts is the entire point of a board. INSERT/UPDATE/
+  DELETE stay owner-only, same as everywhere else.
+- **`poster_display_name` is a denormalized snapshot, not a join to `profiles`.** `profiles`' own
+  SELECT policy is owner-only (and it also holds `instagram_handle`/`tiktok_handle`, never scoped
+  for public visibility) - widening that policy just so Collab Board could show a poster's name
+  would have widened access to an existing, more sensitive table for a new feature. Storing the
+  name directly on the post at creation time (`profile?.display_name ?? profile?.username`, read
+  client-side from `useAuth()`) keeps the blast radius contained to the new table. Same tradeoff
+  as `platform_connection_status.external_account_label`: if someone changes their display name
+  later, old posts keep showing the name as of when they posted.
+- **The 3-open-post cap is a trigger, not a check constraint** - a check constraint can't see other
+  rows, and this needs a cross-row count (`enforce_open_collab_post_cap`, `before insert`). It runs
+  as the inserting user rather than `security definer`, since counting a user's own open posts only
+  needs the same SELECT access every authenticated user already has under the policy above -
+  minimal privilege for what the check actually requires.
+- **Auto-closing stale posts is a plain SQL cron job, no `pg_net`/Edge Function involved** - unlike
+  `sync-performance`, there's no external API to call, just a straight `UPDATE ... WHERE`. Simplest
+  cron job in this project, and proof the earlier pattern (`cron` → `pg_net` → Edge Function) was
+  only ever needed because of the external API calls, not because that's "how cron jobs work" here.
+- **Reports intentionally don't reintroduce messaging.** `collab_post_reports` is insert-only from
+  the client (`with check (auth.uid() = reporter_user_id)`, no SELECT policy - same "write-only"
+  shape as `email_sends`), and `notify_collab_post_reported()` is `security definer` so it can pull
+  both the poster's and reporter's emails from `auth.users` regardless of the reporter's own grants
+  - same reasoning as `handle_new_user`/`notify_waitlist_signup`. Wrapped in
+  `exception when others then return new` for the same reason as the auth-change triggers: this
+  runs synchronously as part of the reporter's insert, and a notification failure must not roll
+  back (and hide) the report itself.
+- **Contact info is opt-in per post, not per account** - re-decided every time someone posts, with
+  explicit consent copy next to the toggle ("visible to anyone using GRIND, not just people you
+  match with"), rather than a persistent profile-level setting that could leak onto a post someone
+  didn't mean to share it on. It's editable/removable at any time via the owner-only UPDATE policy
+  - the actual safety valve here, given there's no messaging layer to fall back on.

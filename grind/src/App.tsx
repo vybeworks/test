@@ -6,8 +6,9 @@ import { RhythmPage } from "./pages/RhythmPage";
 import { PerformanceTrackingPage } from "./pages/PerformanceTrackingPage";
 import { InsightEnginePage } from "./pages/InsightEnginePage";
 import { ReleaseToolkitPage } from "./pages/ReleaseToolkitPage";
+import { CollabBoardPage } from "./pages/CollabBoardPage";
 
-type Screen = "home" | "rhythm" | "track" | "insights" | "releases";
+type Screen = "home" | "rhythm" | "track" | "insights" | "releases" | "collab";
 
 const TABS: { key: Screen; label: string }[] = [
   { key: "home", label: "Home" },
@@ -15,6 +16,7 @@ const TABS: { key: Screen; label: string }[] = [
   { key: "track", label: "Track" },
   { key: "insights", label: "Insights" },
   { key: "releases", label: "Releases" },
+  { key: "collab", label: "Collab" },
 ];
 
 function AppShell() {
@@ -28,6 +30,7 @@ function AppShell() {
       {screen === "track" && <PerformanceTrackingPage />}
       {screen === "insights" && <InsightEnginePage />}
       {screen === "releases" && <ReleaseToolkitPage />}
+      {screen === "collab" && <CollabBoardPage />}
 
       <div
         style={{
